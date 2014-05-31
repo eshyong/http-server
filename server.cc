@@ -7,6 +7,7 @@
 using std::cerr;
 using std::cout;
 using std::endl;
+using std::fstream;
 
 HttpServer::HttpServer() {
     int error = 0;
@@ -65,7 +66,7 @@ void HttpServer::Run() {
     request = ParseRequest();
 
     // Send response
-    SendResponse();
+    SendResponse(request);
 
     // Close the connection
     close(connection);
@@ -93,11 +94,12 @@ void HttpServer::GetRequest() {
 
 HttpRequest* HttpServer::ParseRequest() {
     char buffer[BUFFER_LENGTH + 1];
+    char pathbuf[BUFFER_LENGTH + 1];
+    char* path;
     int i = 0;
     int j = 0;
     http_method_t method;
     http_version_t version;
-    char* path;
 
     // Get method string
     memset(buffer, 0, sizeof(buffer));
@@ -124,7 +126,11 @@ HttpRequest* HttpServer::ParseRequest() {
         j++;
     }
     i++;
-    path = strndup(buffer, BUFFER_LENGTH);
+    
+    // Add requested path to current working directory
+    getcwd(pathbuf, BUFFER_LENGTH);
+    strncat(pathbuf, buffer, BUFFER_LENGTH - strlen(pathbuf));
+    path = strndup(pathbuf, BUFFER_LENGTH);
 
     // Get version number
     j = 0;
@@ -142,10 +148,23 @@ HttpRequest* HttpServer::ParseRequest() {
     return new HttpRequest(path, method, version);
 }
 
-void HttpServer::SendResponse() {
+void HttpServer::SendResponse(const HttpRequest* request) {
+    int status = 0;
+    fstream file;
+    
+    if (request->method == GET) {
+        cout << request->path << endl;
+        file.open(request->path);
+        if (!file.is_open()) {
+            
+        }
+    } else {
+        cout << "Not implemented yet\n";
+        return;
+    }
     strncpy(sendbuf, "HTTP/1.1 200 OK\r\n", BUFFER_LENGTH);
     sendbuf[BUFFER_LENGTH] = (char) NULL;
-    int count = send(connection, sendbuf, strlen(sendbuf) + 1, 0);
+    send(connection, sendbuf, strlen(sendbuf) + 1, 0);
 }
 
 http_method_t HttpServer::GetMethod(const char *string) {
@@ -180,6 +199,10 @@ HttpRequest::HttpRequest(char* path, http_method_t method, http_version_t versio
     this->path = path;
     this->method = method;
     this->version = version;
+}
+
+HttpRequest::~HttpRequest() {
+    delete path;
 }
 
 int main() {

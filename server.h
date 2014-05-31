@@ -3,10 +3,11 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <fstream>
 
 #define PORT          80
 #define BACKLOG       10
-#define BUFFER_LENGTH 1023
+#define BUFFER_LENGTH 4095
 
 enum http_method_t {
     INVALID_METHOD = 0, GET, POST, PUT, DELETE
@@ -16,6 +17,10 @@ enum http_version_t {
     INVALID_VERSION = 0, ONE, TWO, THREE
 };
 
+const char* versions[] = {
+    "HTTP/1.0", "HTTP/1.1", "HTTP/2.0",
+};
+
 struct HttpRequest {
 public:
     const char* path;
@@ -23,6 +28,7 @@ public:
     http_version_t version;
 public:
     HttpRequest(char* path, http_method_t method, http_version_t version);
+    ~HttpRequest();
 };
 
 class HttpServer {
@@ -46,7 +52,7 @@ public:
     void Connect();
     void GetRequest();
     HttpRequest* ParseRequest();
-    void SendResponse();
+    void SendResponse(const HttpRequest* request);
     http_method_t GetMethod(const char *string);
     http_version_t GetVersion(const char *string);
     bool IsGood();
