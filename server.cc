@@ -22,7 +22,7 @@ HttpServer::HttpServer() {
     // Create a socket and bind to our host address
     listening = socket(AF_INET, SOCK_STREAM, 0);
     if (listening < 0) {
-        cerr << "Socket creation failed.\n";
+        perror("socket");
         close(listening);
         exit(EXIT_FAILURE);
     }
@@ -44,7 +44,12 @@ HttpServer::HttpServer() {
     }
 
     // Listen for connections (1 for now)
-    listen(listening, 1);
+    error = listen(listening, 1);
+    if (error < 0) {
+        perror("listen");
+        close(listening);
+        exit(EXIT_FAILURE);
+    }
 }
 
 HttpServer::~HttpServer() {
@@ -54,7 +59,7 @@ HttpServer::~HttpServer() {
 }
 
 void HttpServer::Run() {
-    HttpRequest* request;
+    HttpRequest request;
 
     // Wait for a connection
     Connect();
@@ -63,36 +68,37 @@ void HttpServer::Run() {
     GetRequest();
 
     // Parse request
-    request = ParseRequest();
+    ParseRequest(request);
 
     // Send response
-    SendResponse(request);
+    HandleRequest(request);
 
     // Close the connection
     close(connection);
-
-    // Clean up
-    delete request;
 }
 
-void HttpServer::Connect() {
+bool HttpServer::Connect() {
     // Accept any incoming connections
     connection = accept(listening, NULL, NULL);
     if (connection < 0) {
-        cerr << "Error accepting connection.\n";
-        close(listening);
-        exit(EXIT_FAILURE);
+        cerr << "accept" << strerror(errno);
+        return false;
     }
+    return true;
 }
 
-void HttpServer::GetRequest() {
+bool HttpServer::GetRequest() {
     int count = recv(connection, recvbuf, BUFFER_LENGTH, 0);
-    bool status;
+    if (count < 0) {
+        cerr << "recv" << strerror(errno);
+        return false;
+    }
     recvbuf[BUFFER_LENGTH] = (char) NULL;
     cout << "Message: " << recvbuf;
+    return true;
 }
 
-HttpRequest* HttpServer::ParseRequest() {
+bool HttpServer::ParseRequest(HttpRequest& request) {
     char buffer[BUFFER_LENGTH + 1];
     char pathbuf[BUFFER_LENGTH + 1];
     char* path;
@@ -115,7 +121,7 @@ HttpRequest* HttpServer::ParseRequest() {
     method = GetMethod(buffer);
     if (method == INVALID_METHOD) {
         cout << "Invalid HTTP method\n";
-        return NULL;
+        return false;
     }
 
     // Get folder path
@@ -128,8 +134,9 @@ HttpRequest* HttpServer::ParseRequest() {
     i++;
     
     // Add requested path to current working directory
-    getcwd(pathbuf, BUFFER_LENGTH);
-    strncat(pathbuf, buffer, BUFFER_LENGTH - strlen(pathbuf));
+    buffer[j] = (char) NULL;
+    strncpy(pathbuf, DIRECTORY, strlen(DIRECTORY));
+    strncat(pathbuf, buffer, strlen(buffer));
     path = strndup(pathbuf, BUFFER_LENGTH);
 
     // Get version number
@@ -139,32 +146,68 @@ HttpRequest* HttpServer::ParseRequest() {
         i++;
         j++;
     }
+
+    // Parse version number
+    buffer[j] = (char) NULL;
     version = GetVersion(buffer);
     if (version == INVALID_VERSION) {
         cout << "Invalid HTTP version.\n";
-        return NULL;
+        return false;
     }
 
-    return new HttpRequest(path, method, version);
+    // Fill request struct
+    request.set_path(path);
+    request.set_version(version);
+    request.set_method(method);
+    return true;
 }
 
-void HttpServer::SendResponse(const HttpRequest* request) {
-    int status = 0;
+bool HttpServer::HandleRequest(HttpRequest& request) {
+    http_status_t status = OK;
+    http_method_t method = request.get_method();
+    http_version_t version = request.get_version();
+    const char* path = request.get_path();
     fstream file;
     
-    if (request->method == GET) {
-        cout << request->path << endl;
-        file.open(request->path);
+    // Handle each HTTP method
+    if (method == GET) {
+        // Get URI resource by opening file
+        cout << path << endl;
+        file.open(path, fstream::in);
         if (!file.is_open()) {
-            
+            cerr << "open" << strerror(errno);
+            status = NOT_FOUND;
         }
+    } else if (method == POST) {
+        cout << "Not implemented yet\n"; 
+        return true;
     } else {
         cout << "Not implemented yet\n";
-        return;
+        return false;
     }
-    strncpy(sendbuf, "HTTP/1.1 200 OK\r\n", BUFFER_LENGTH);
-    sendbuf[BUFFER_LENGTH] = (char) NULL;
-    send(connection, sendbuf, strlen(sendbuf) + 1, 0);
+
+    SendResponse(version, method, status, file);
+    return true;
+}
+
+bool HttpServer::SendResponse(http_version_t version, http_method_t method, http_status_t status, fstream& file) {
+    // Send version string
+    send(connection, versions[version], strlen(versions[version]), 0);
+    send(connection, SPACE, strlen(SPACE), 0);
+
+    // Send status code
+    send(connection, statuses[status], strlen(statuses[status]), 0);
+    send(connection, CRLF, strlen(CRLF), 0);
+    
+    // Check method type
+    if (method == GET && status == OK) {
+        // Send file over socket
+        while (file.good()) {
+            char c = (char) file.get();
+            send(connection, &c, 1, 0);
+        }
+    }
+    return true;
 }
 
 http_method_t HttpServer::GetMethod(const char *string) {
@@ -199,6 +242,12 @@ HttpRequest::HttpRequest(char* path, http_method_t method, http_version_t versio
     this->path = path;
     this->method = method;
     this->version = version;
+}
+
+HttpRequest::HttpRequest() {
+    path = NULL;
+    method = INVALID_METHOD;
+    version = INVALID_VERSION;
 }
 
 HttpRequest::~HttpRequest() {

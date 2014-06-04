@@ -9,6 +9,6 @@ clean:
 	rm -rf server *.o
 
 server.o: server.cc
-	$(CC) $(CFLAGS) $(VERBOSE) server.cc
+	$(CC) $(CFLAGS) server.cc
 
 
