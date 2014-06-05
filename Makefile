@@ -6,7 +6,7 @@ all: server.o
 	$(CC) server.o -o server
 
 clean:
-	rm -rf server *.o
+	rm -rf server *.o *.dSYM
 
 server.o: server.cc
 	$(CC) $(CFLAGS) server.cc

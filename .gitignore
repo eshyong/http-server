@@ -2,4 +2,5 @@ client
 server
 *.o
 *.dSYM
-.swp
+*.swp
+*.asm

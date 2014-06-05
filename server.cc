@@ -1,6 +1,7 @@
 #include "server.h"
 #include <cerrno>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 
@@ -8,6 +9,8 @@ using std::cerr;
 using std::cout;
 using std::endl;
 using std::fstream;
+using std::string;
+using std::to_string;
 
 HttpServer::HttpServer() {
     int error = 0;
@@ -62,26 +65,25 @@ void HttpServer::Run() {
     HttpRequest request;
 
     // Wait for a connection
-    Connect();
+    if (Connect()) {
+        // Receive bytes from client and parse the request
+        if (GetRequest() && ParseRequest(request)) {
+            // Send response
+            HandleRequest(request);
+        }
+        // Close connection
+        close(connection);
+    }
 
-    // Receive bytes from client
-    GetRequest();
-
-    // Parse request
-    ParseRequest(request);
-
-    // Send response
-    HandleRequest(request);
-
-    // Close the connection
-    close(connection);
+    // Reset request
+    request.Reset();
 }
 
 bool HttpServer::Connect() {
     // Accept any incoming connections
     connection = accept(listening, NULL, NULL);
     if (connection < 0) {
-        cerr << "accept" << strerror(errno);
+        cerr << "accept: " << strerror(errno) << endl;
         return false;
     }
     return true;
@@ -90,11 +92,11 @@ bool HttpServer::Connect() {
 bool HttpServer::GetRequest() {
     int count = recv(connection, recvbuf, BUFFER_LENGTH, 0);
     if (count < 0) {
-        cerr << "recv" << strerror(errno);
+        cerr << "recv: " << strerror(errno) << endl;
         return false;
     }
     recvbuf[BUFFER_LENGTH] = (char) NULL;
-    cout << "Message: " << recvbuf;
+    cout << "Message: " << recvbuf << endl;
     return true;
 }
 
@@ -107,8 +109,11 @@ bool HttpServer::ParseRequest(HttpRequest& request) {
     http_method_t method;
     http_version_t version;
 
-    // Get method string
+    // Zero out previous memory
+    memset(pathbuf, 0, sizeof(pathbuf));
     memset(buffer, 0, sizeof(buffer));
+
+    // Get method string
     while (i <= BUFFER_LENGTH && j <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
         buffer[j] = recvbuf[i];
         i++;
@@ -172,40 +177,64 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     // Handle each HTTP method
     if (method == GET) {
         // Get URI resource by opening file
-        cout << path << endl;
         file.open(path, fstream::in);
         if (!file.is_open()) {
-            cerr << "open" << strerror(errno);
+            // 404 Error
+            cerr << "open: " << strerror(errno) << endl;
             status = NOT_FOUND;
         }
-    } else if (method == POST) {
-        cout << "Not implemented yet\n"; 
-        return true;
     } else {
         cout << "Not implemented yet\n";
-        return false;
+        status = NOT_IMPLEMENTED;
     }
 
-    SendResponse(version, method, status, file);
+    HttpResponse response(&file, method, version, status);
+    SendResponse(response, file);
     return true;
 }
 
-bool HttpServer::SendResponse(http_version_t version, http_method_t method, http_status_t status, fstream& file) {
-    // Send version string
-    send(connection, versions[version], strlen(versions[version]), 0);
-    send(connection, SPACE, strlen(SPACE), 0);
-
-    // Send status code
-    send(connection, statuses[status], strlen(statuses[status]), 0);
-    send(connection, CRLF, strlen(CRLF), 0);
+bool HttpServer::SendResponse(HttpResponse& response, fstream& file) {
+    int count = 0;
+    int index = 0;
+    char c;
     
+    http_version_t version = response.get_version();
+    http_method_t method = response.get_method();
+    http_status_t status = response.get_status();
+
+    // Create a buffer and fill with information from response
+    string buffer = "";
+    string body = "";
+
     // Check method type
     if (method == GET && status == OK) {
-        // Send file over socket
-        while (file.good()) {
-            char c = (char) file.get();
-            send(connection, &c, 1, 0);
+        // Get all characters in file
+        while (file.good() && index <= BODY_LENGTH) {
+            body += (char) file.get();
+            index++;
         }
+    }
+
+    // Append status line to buffer
+    buffer += versions[version];
+    buffer += SPACE;
+    buffer += statuses[status];
+    buffer += CRLF;
+    buffer += "Accept-Ranges: bytes";
+    buffer += CRLF;
+    buffer += "Content-Type: text/html";
+    buffer += CRLF;
+    buffer += "Content-Length: ";
+    buffer += to_string(body.length() - 1);
+    buffer += CRLF;
+    buffer += CRLF;
+    buffer += body;
+    
+    // Send buffer over socket, no need for NULL termination
+    count = send(connection, buffer.c_str(), buffer.length() - 1, 0);
+    if (count < 0) {
+        cerr << "send: " << strerror(errno) << endl;
+        return false;
     }
     return true;
 }
@@ -239,19 +268,42 @@ bool HttpServer::IsGood() {
 }
 
 HttpRequest::HttpRequest(char* path, http_method_t method, http_version_t version) {
-    this->path = path;
+    set_path(path);
     this->method = method;
     this->version = version;
 }
 
 HttpRequest::HttpRequest() {
-    path = NULL;
+    method = INVALID_METHOD;
+    version = INVALID_VERSION;
+}
+
+void HttpRequest::Reset() {
     method = INVALID_METHOD;
     version = INVALID_VERSION;
 }
 
 HttpRequest::~HttpRequest() {
-    delete path;
+}
+
+HttpResponse::HttpResponse(fstream* file, http_method_t method, http_version_t version, http_status_t status) {
+    this->file = file;
+    this->method = method;
+    this->version = version;
+    this->status = status;
+}
+
+HttpResponse::HttpResponse() {
+    method = INVALID_METHOD;
+    version = INVALID_VERSION;
+}
+
+void HttpResponse::Reset() {
+    method = INVALID_METHOD;
+    version = INVALID_VERSION;
+}
+
+HttpResponse::~HttpResponse() {
 }
 
 int main() {
