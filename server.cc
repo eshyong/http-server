@@ -1,9 +1,10 @@
-#include "server.h"
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include "http.h"
+#include "server.h"
 
 using std::cerr;
 using std::cout;
@@ -12,14 +13,18 @@ using std::fstream;
 using std::string;
 using std::to_string;
 
-HttpServer::HttpServer() {
+////////////////////////////////////////////////
+//              SocketServer                  //
+////////////////////////////////////////////////
+
+// Constructor zero initializes buffer, 
+SocketServer::SocketServer() {
     int error = 0;
     good = true;
 
     // Zero initialize buffers and socket addresses
-    memset(sendbuf, 0, sizeof(sendbuf));
     memset(recvbuf, 0, sizeof(recvbuf));
-    memset(&server, 0, sizeof(server));
+    memset(&serveraddr, 0, sizeof(serveraddr));
     memset(&client, 0, sizeof(client));
 
     // Create a socket and bind to our host address
@@ -34,12 +39,12 @@ HttpServer::HttpServer() {
     setsockopt(listening, SOL_SOCKET, SO_REUSEADDR, NULL, 0);
 
     // Server socket information
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = htonl(INADDR_ANY);
-    server.sin_port = htons(PORT);
+    serveraddr.sin_family = AF_INET;
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serveraddr.sin_port = htons(PORT);
 
     // Bind socket to a local address
-    error = bind(listening, (const struct sockaddr *) &server, sizeof(server));
+    error = bind(listening, (const struct sockaddr *) &serveraddr, sizeof(serveraddr));
     if (error < 0) {
         perror("bind");
         close(listening);
@@ -55,44 +60,26 @@ HttpServer::HttpServer() {
     }
 }
 
-HttpServer::~HttpServer() {
+SocketServer::~SocketServer() {
     // Close listening socket and any connections
     close(listening);
     close(connection);
 }
 
-void HttpServer::Run() {
-    HttpRequest request;
-
-    // Wait for a connection
-    if (Connect()) {
-        // Receive bytes from client and parse the request
-        if (GetRequest() && ParseRequest(request)) {
-            // Send response
-            HandleRequest(request);
-        }
-        // Close connection
-        close(connection);
-    }
-
-    // Reset request
-    request.Reset();
-}
-
-bool HttpServer::Connect() {
+bool SocketServer::Connect() {
     // Accept any incoming connections
     connection = accept(listening, NULL, NULL);
     if (connection < 0) {
-        cerr << "accept: " << strerror(errno) << endl;
+        perror("accept");
         return false;
     }
     return true;
 }
 
-bool HttpServer::GetRequest() {
+bool SocketServer::Receive() {
     int count = recv(connection, recvbuf, BUFFER_LENGTH, 0);
     if (count < 0) {
-        cerr << "recv: " << strerror(errno) << endl;
+        perror("recv");
         return false;
     }
     recvbuf[BUFFER_LENGTH] = (char) NULL;
@@ -100,7 +87,57 @@ bool HttpServer::GetRequest() {
     return true;
 }
 
-bool HttpServer::ParseRequest(HttpRequest& request) {
+bool SocketServer::Close() {
+    int error = close(connection);
+    if (error < 0) {
+        perror("close");
+        return false;
+    }
+    return true;
+}
+
+bool SocketServer::SendResponse(string buffer) {
+    // Send buffer over socket, no need for NULL termination
+    int count = send(connection, buffer.c_str(), buffer.length() - 1, 0);
+    if (count < 0) {
+        perror("send");
+        return false;
+    }
+    return true;
+}
+
+bool SocketServer::IsGood() {
+    return good;
+}
+
+////////////////////////////////////////////////
+//              HttpServer                    //
+////////////////////////////////////////////////
+HttpServer::HttpServer() {}
+
+HttpServer::~HttpServer() {}
+
+void HttpServer::Run() {
+    while (server.IsGood()) {
+        HttpRequest request;
+
+        // Wait for a connection
+        if (server.Connect()) {
+            // Receive bytes from client and parse the request
+            if (server.Receive() && ParseRequest(request, server.get_buffer())) {
+                // Send response
+                HandleRequest(request);
+            }
+            // Close connection
+            server.Close();
+        }
+
+        // Reset request
+        request.Reset();
+    }
+}
+
+bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     char buffer[BUFFER_LENGTH + 1];
     char pathbuf[BUFFER_LENGTH + 1];
     char* path;
@@ -180,7 +217,7 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
         file.open(path, fstream::in);
         if (!file.is_open()) {
             // 404 Error
-            cerr << "open: " << strerror(errno) << endl;
+            perror("open");
             status = NOT_FOUND;
         }
     } else {
@@ -189,57 +226,11 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     }
 
     HttpResponse response(&file, method, version, status);
-    SendResponse(response, file);
+    server.SendResponse(response.to_string());
     return true;
 }
 
-bool HttpServer::SendResponse(HttpResponse& response, fstream& file) {
-    int count = 0;
-    int index = 0;
-    char c;
-    
-    http_version_t version = response.get_version();
-    http_method_t method = response.get_method();
-    http_status_t status = response.get_status();
-
-    // Create a buffer and fill with information from response
-    string buffer = "";
-    string body = "";
-
-    // Check method type
-    if (method == GET && status == OK) {
-        // Get all characters in file
-        while (file.good() && index <= BODY_LENGTH) {
-            body += (char) file.get();
-            index++;
-        }
-    }
-
-    // Append status line to buffer
-    buffer += versions[version];
-    buffer += SPACE;
-    buffer += statuses[status];
-    buffer += CRLF;
-    buffer += "Accept-Ranges: bytes";
-    buffer += CRLF;
-    buffer += "Content-Type: text/html";
-    buffer += CRLF;
-    buffer += "Content-Length: ";
-    buffer += to_string(body.length() - 1);
-    buffer += CRLF;
-    buffer += CRLF;
-    buffer += body;
-    
-    // Send buffer over socket, no need for NULL termination
-    count = send(connection, buffer.c_str(), buffer.length() - 1, 0);
-    if (count < 0) {
-        cerr << "send: " << strerror(errno) << endl;
-        return false;
-    }
-    return true;
-}
-
-http_method_t HttpServer::GetMethod(const char *string) {
+http_method_t HttpServer::GetMethod(const char* string) {
     if (strcmp(string, "GET") == 0) {
         return GET;
     } else if (strcmp(string, "POST") == 0) {
@@ -252,7 +243,7 @@ http_method_t HttpServer::GetMethod(const char *string) {
     return INVALID_METHOD;
 }
 
-http_version_t HttpServer::GetVersion(const char *string) {
+http_version_t HttpServer::GetVersion(const char* string) {
     if (strcmp(string, "HTTP/1.0") == 0) {
         return ONE;
     } else if (strcmp(string, "HTTP/1.1") == 0) {
@@ -263,10 +254,9 @@ http_version_t HttpServer::GetVersion(const char *string) {
     return INVALID_VERSION;
 }
 
-bool HttpServer::IsGood() {
-    return good;
-}
-
+////////////////////////////////////////////////
+//              HttpRequest                   //
+////////////////////////////////////////////////
 HttpRequest::HttpRequest(char* path, http_method_t method, http_version_t version) {
     set_path(path);
     this->method = method;
@@ -286,11 +276,51 @@ void HttpRequest::Reset() {
 HttpRequest::~HttpRequest() {
 }
 
+////////////////////////////////////////////////
+//              HttpResponse                  //
+////////////////////////////////////////////////
 HttpResponse::HttpResponse(fstream* file, http_method_t method, http_version_t version, http_status_t status) {
     this->file = file;
     this->method = method;
     this->version = version;
     this->status = status;
+    Initialize();
+}
+
+void HttpResponse::Initialize() {
+    // Create the string representation 
+    int count = 0;
+    int index = 0;
+    char c;
+    string body;
+
+    // Create a buffer and fill with information from response
+    stringrep = "";
+    body = "";
+
+    // Check method type
+    if (method == GET && status == OK) {
+        // Get all characters in file
+        while (file->good() && index <= BODY_LENGTH) {
+            body += (char) file->get();
+            index++;
+        }
+    }
+
+    // Append status line, options, and body to buffer
+    stringrep += versions[version];
+    stringrep += SPACE;
+    stringrep += statuses[status];
+    stringrep += CRLF;
+    stringrep += "Accept-Ranges: bytes";
+    stringrep += CRLF;
+    stringrep += "Content-Type: text/html";
+    stringrep += CRLF;
+    stringrep += "Content-Length: ";
+    stringrep += ::to_string(body.length() - 1);
+    stringrep += CRLF;
+    stringrep += CRLF;
+    stringrep += body;
 }
 
 HttpResponse::HttpResponse() {
@@ -306,10 +336,11 @@ void HttpResponse::Reset() {
 HttpResponse::~HttpResponse() {
 }
 
+////////////////////////////////////////////////
+//                  Main                      //
+////////////////////////////////////////////////
 int main() {
-    HttpServer server;
-    while (server.IsGood()) {
-        server.Run();
-    }
+    HttpServer http;
+    http.Run();
     return 0;
 }
