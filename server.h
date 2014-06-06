@@ -31,6 +31,7 @@ public:
     bool Receive();
     bool Close();
     bool IsGood();
+    void ResetBuffer();
 };
 
 class HttpServer {

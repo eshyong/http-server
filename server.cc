@@ -82,7 +82,7 @@ bool SocketServer::Receive() {
         perror("recv");
         return false;
     }
-    recvbuf[BUFFER_LENGTH] = (char) NULL;
+    recvbuf[strlen(recvbuf)] = (char) NULL;
     cout << "Message: " << recvbuf << endl;
     return true;
 }
@@ -110,6 +110,10 @@ bool SocketServer::IsGood() {
     return good;
 }
 
+void SocketServer::ResetBuffer() {
+    memset(recvbuf, 0, sizeof(recvbuf));
+}
+
 ////////////////////////////////////////////////
 //              HttpServer                    //
 ////////////////////////////////////////////////
@@ -118,23 +122,38 @@ HttpServer::HttpServer() {}
 HttpServer::~HttpServer() {}
 
 void HttpServer::Run() {
+    pid_t pid;
     while (server.IsGood()) {
         HttpRequest request;
 
         // Wait for a connection
         if (server.Connect()) {
-            // Receive bytes from client and parse the request
-            if (server.Receive() && ParseRequest(request, server.get_buffer())) {
-                // Send response
-                HandleRequest(request);
+            pid = fork();
+
+            if (pid < 0) {
+                // Error 
+                perror("fork");
+                continue;
+            } else if (pid == 0) {
+                // Child process
+                if (server.Receive() && ParseRequest(request, server.get_buffer())) {
+                    // Handle request and response
+                    HandleRequest(request);
+                }
+                // Close connection and exit
+                server.Close();
+                exit(EXIT_SUCCESS);
+            } else {
+                // Parent process
+                server.Close();
             }
-            // Close connection
-            server.Close();
         }
 
-        // Reset request
+        // Reset server
         request.Reset();
+        server.ResetBuffer();
     }
+    cout << "Server shutting down...\n";
 }
 
 bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
