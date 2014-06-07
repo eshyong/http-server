@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <fcntl.h>
 #include "http.h"
 #include "server.h"
 
@@ -13,6 +14,14 @@ using std::fstream;
 using std::string;
 using std::to_string;
 
+static bool running = true;
+
+// Signal handler for keyboard interrupts
+void handleSigint(int signum) {
+    // Turn off event loop
+    running = false;
+}
+
 ////////////////////////////////////////////////
 //              SocketServer                  //
 ////////////////////////////////////////////////
@@ -20,7 +29,7 @@ using std::to_string;
 // Constructor zero initializes buffer, 
 SocketServer::SocketServer() {
     int error = 0;
-    good = true;
+    int flags = 0;
 
     // Zero initialize buffers and socket addresses
     memset(recvbuf, 0, sizeof(recvbuf));
@@ -35,8 +44,10 @@ SocketServer::SocketServer() {
         exit(EXIT_FAILURE);
     }
 
-    // Set socket reuse options
+    // Set socket reuse and non-blocking options
     setsockopt(listening, SOL_SOCKET, SO_REUSEADDR, NULL, 0);
+    flags = fcntl(listening, F_GETFL, 0);
+    fcntl(listening, F_SETFL, flags | O_NONBLOCK);
 
     // Server socket information
     serveraddr.sin_family = AF_INET;
@@ -70,7 +81,7 @@ bool SocketServer::Connect() {
     // Accept any incoming connections
     connection = accept(listening, NULL, NULL);
     if (connection < 0) {
-        perror("accept");
+        // Expected behavior since this is a non-blocking socket
         return false;
     }
     return true;
@@ -82,7 +93,7 @@ bool SocketServer::Receive() {
         perror("recv");
         return false;
     }
-    recvbuf[strlen(recvbuf)] = (char) NULL;
+    recvbuf[count] = (char) NULL;
     cout << "Message: " << recvbuf << endl;
     return true;
 }
@@ -106,14 +117,6 @@ bool SocketServer::SendResponse(string buffer) {
     return true;
 }
 
-bool SocketServer::IsGood() {
-    return good;
-}
-
-void SocketServer::ResetBuffer() {
-    memset(recvbuf, 0, sizeof(recvbuf));
-}
-
 ////////////////////////////////////////////////
 //              HttpServer                    //
 ////////////////////////////////////////////////
@@ -123,7 +126,11 @@ HttpServer::~HttpServer() {}
 
 void HttpServer::Run() {
     pid_t pid;
-    while (server.IsGood()) {
+    cout << "Server starting...\n";
+
+    // Add sigint handler and start event loop
+    signal(SIGINT, handleSigint);
+    while (running) {
         HttpRequest request;
 
         // Wait for a connection
@@ -149,9 +156,8 @@ void HttpServer::Run() {
             }
         }
 
-        // Reset server
+        // Reset request
         request.Reset();
-        server.ResetBuffer();
     }
     cout << "Server shutting down...\n";
 }

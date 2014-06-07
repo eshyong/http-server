@@ -20,7 +20,6 @@ private:
     int listening;
     int connection;
     char recvbuf[BUFFER_LENGTH + 1];
-    bool good;
 
 public:
     SocketServer();
@@ -31,7 +30,6 @@ public:
     bool Receive();
     bool Close();
     bool IsGood();
-    void ResetBuffer();
 };
 
 class HttpServer {
