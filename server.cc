@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <fcntl.h>
 #include "http.h"
@@ -16,25 +17,33 @@ using std::to_string;
 
 static bool running = true;
 
-// Signal handler for keyboard interrupts
+////////////////////////////////////////////////
+//              Sig Handlers                  //
+////////////////////////////////////////////////
 void handleSigint(int signum) {
     // Turn off event loop
     running = false;
+}
+
+void handleSigchld(int signum) {
+    // Prevent zombie processes
+    int status;
+    while (waitpid(-1, &status, WNOHANG) == 0);
 }
 
 ////////////////////////////////////////////////
 //              SocketServer                  //
 ////////////////////////////////////////////////
 
-// Constructor zero initializes buffer, 
 SocketServer::SocketServer() {
     int error = 0;
     int flags = 0;
 
     // Zero initialize buffers and socket addresses
-    memset(recvbuf, 0, sizeof(recvbuf));
-    memset(&serveraddr, 0, sizeof(serveraddr));
-    memset(&client, 0, sizeof(client));
+    memset(recvbuf, (char) NULL, sizeof(recvbuf));
+    memset(peername, (char) NULL, sizeof(peername));
+    memset(&serveraddr, (char) NULL, sizeof(serveraddr));
+    memset(&clientaddr, (char) NULL, sizeof(clientaddr));
 
     // Create a socket and bind to our host address
     listening = socket(AF_INET, SOCK_STREAM, 0);
@@ -79,22 +88,32 @@ SocketServer::~SocketServer() {
 
 bool SocketServer::Connect() {
     // Accept any incoming connections
+    socklen_t length = sizeof(clientaddr);
+    int error = 0;
     connection = accept(listening, NULL, NULL);
     if (connection < 0) {
-        // Expected behavior since this is a non-blocking socket
+        // Expected behavior since we are using non-blocking sockets
         return false;
+    }
+    // Get connecting client's network info
+    error = getpeername(connection, (struct sockaddr *)&clientaddr, &length);
+    if (error < 0) {
+        perror("getpeername");
+        memset(peername, (char) NULL, sizeof(peername));
+    } else {
+        inet_ntop(AF_INET, &(clientaddr.sin_addr), peername, length);
     }
     return true;
 }
 
 bool SocketServer::Receive() {
     int count = recv(connection, recvbuf, BUFFER_LENGTH, 0);
-    if (count < 0) {
-        perror("recv");
+    if (count <= 0) {
         return false;
     }
     recvbuf[count] = (char) NULL;
-    cout << "Message: " << recvbuf << endl;
+    cout << "Received " << count << " bytes from " << peername << ":\n";
+    cout << recvbuf << endl;
     return true;
 }
 
@@ -120,33 +139,50 @@ bool SocketServer::SendResponse(string buffer) {
 ////////////////////////////////////////////////
 //              HttpServer                    //
 ////////////////////////////////////////////////
-HttpServer::HttpServer() {}
+HttpServer::HttpServer() { elapsedtime = 0.0; }
 
 HttpServer::~HttpServer() {}
 
 void HttpServer::Run() {
     pid_t pid;
-    cout << "Server starting...\n";
+    time_t begin;
+    time_t end;
+    int status;
+    cout << "Server starting...\n\n";
 
-    // Add sigint handler and start event loop
+    // Add signal handlers
     signal(SIGINT, handleSigint);
+    signal(SIGCHLD, handleSigchld);
+
+    // Event loop
     while (running) {
         HttpRequest request;
 
         // Wait for a connection
         if (server.Connect()) {
+            // Fork a new server process to handle client connection
             pid = fork();
-
             if (pid < 0) {
                 // Error 
                 perror("fork");
                 continue;
             } else if (pid == 0) {
                 // Child process
-                if (server.Receive() && ParseRequest(request, server.get_buffer())) {
-                    // Handle request and response
-                    HandleRequest(request);
-                }
+                // Begin timer
+                time(&begin);
+                time(&end);
+                elapsedtime = difftime(end, begin);
+                
+                do {
+                    if (server.Receive() && ParseRequest(request, server.get_buffer())) {
+                        // Handle request and response
+                        HandleRequest(request);
+                    }
+                    // Calculate elapsed time
+                    time(&end);
+                    elapsedtime = difftime(end, begin);
+                } while (elapsedtime < TIME_OUT);
+
                 // Close connection and exit
                 server.Close();
                 exit(EXIT_SUCCESS);
@@ -154,126 +190,122 @@ void HttpServer::Run() {
                 // Parent process
                 server.Close();
             }
+            // Reset request
+            request.Reset();
         }
-
-        // Reset request
-        request.Reset();
+        // Sleep if not connected
+        usleep(SLEEP_MSEC);
     }
     cout << "Server shutting down...\n";
 }
 
 bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
-    char buffer[BUFFER_LENGTH + 1];
-    char pathbuf[BUFFER_LENGTH + 1];
-    char* path;
     int i = 0;
-    int j = 0;
     http_method_t method;
     http_version_t version;
-
-    // Zero out previous memory
-    memset(pathbuf, 0, sizeof(pathbuf));
-    memset(buffer, 0, sizeof(buffer));
+    string buffer = "";
+    string path = "";
 
     // Get method string
-    while (i <= BUFFER_LENGTH && j <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
-        buffer[j] = recvbuf[i];
+    while (i <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
+        buffer += recvbuf[i];
         i++;
-        j++;
     }
     i++;
 
     // Parse method
-    buffer[j] = (char) NULL;
     method = GetMethod(buffer);
     if (method == INVALID_METHOD) {
-        cout << "Invalid HTTP method\n";
-        return false;
+        cout << "Unrecognized HTTP method\n";
     }
 
     // Get folder path
-    j = 0;
-    while (i <= BUFFER_LENGTH && j <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
-        buffer[j] = recvbuf[i];
+    path = DIRECTORY;
+    while (i <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
+        path += recvbuf[i];
         i++;
-        j++;
     }
     i++;
-    
-    // Add requested path to current working directory
-    buffer[j] = (char) NULL;
-    strncpy(pathbuf, DIRECTORY, strlen(DIRECTORY));
-    strncat(pathbuf, buffer, strlen(buffer));
-    path = strndup(pathbuf, BUFFER_LENGTH);
 
     // Get version number
-    j = 0;
-    while (i <= BUFFER_LENGTH && j <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
-        buffer[j] = recvbuf[i];
+    buffer = "";
+    while (i <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
+        buffer += recvbuf[i];
         i++;
-        j++;
     }
+    i++;
 
     // Parse version number
-    buffer[j] = (char) NULL;
     version = GetVersion(buffer);
     if (version == INVALID_VERSION) {
         cout << "Invalid HTTP version.\n";
-        return false;
     }
 
     // Fill request struct
-    request.set_path(path);
-    request.set_version(version);
-    request.set_method(method);
+    request.Initialize(path, method, version, NULL);
     return true;
 }
 
 bool HttpServer::HandleRequest(HttpRequest& request) {
+    HttpResponse response;
+    bool flag = request.get_flag();
     http_status_t status = OK;
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
-    const char* path = request.get_path();
+    string path = request.get_path();
     fstream file;
     
-    // Handle each HTTP method
-    if (method == GET) {
-        // Get URI resource by opening file
-        file.open(path, fstream::in);
-        if (!file.is_open()) {
-            // 404 Error
-            perror("open");
-            status = NOT_FOUND;
-        }
-    } else {
-        cout << "Not implemented yet\n";
+    if (flag) {
+        // Request entity too large
+        status = REQUEST_ENTITY_TOO_LARGE;
+    } else if (version == INVALID_VERSION) {
+        // Invalid request
+        status = BAD_REQUEST;
+    } else if (method == INVALID_METHOD) {
+        // Unrecognized method
         status = NOT_IMPLEMENTED;
+    } else {
+        // Handle each HTTP method
+        if (method == GET) {
+            // Get URI resource by opening file
+            file.open(path, fstream::in);
+            if (!file.is_open()) {
+                // 404 Error
+                perror("open");
+                status = NOT_FOUND;
+            }
+        } else {
+            // Unimplemented methods
+            cout << "Not implemented yet\n";
+            status = NOT_IMPLEMENTED;
+        }
     }
 
-    HttpResponse response(&file, method, version, status);
+    // Send response
+    response.Initialize(&file, method, version, status, NULL);
     server.SendResponse(response.to_string());
     return true;
 }
 
-http_method_t HttpServer::GetMethod(const char* string) {
-    if (strcmp(string, "GET") == 0) {
+http_method_t HttpServer::GetMethod(const string method) {
+    if (method.compare("GET") == 0) {
         return GET;
-    } else if (strcmp(string, "POST") == 0) {
+    } else if (method.compare("POST") == 0) {
         return POST;
-    } else if (strcmp(string, "PUT") == 0) {
+    } else if (method.compare("PUT") == 0) {
         return PUT;
-    } else if (strcmp(string, "DELETE") == 0) {
+    } else if (method.compare("DELETE") == 0) {
         return DELETE;
     }
     return INVALID_METHOD;
 }
 
-http_version_t HttpServer::GetVersion(const char* string) {
-    if (strcmp(string, "HTTP/1.0") == 0) {
+http_version_t HttpServer::GetVersion(const string version) {
+    if (version.compare("HTTP/1.0") == 0) {
         return ONE;
-    } else if (strcmp(string, "HTTP/1.1") == 0) {
+    } else if (version.compare("HTTP/1.1") == 0) {
         return TWO;
-    } else if (strcmp(string, "HTTP/2.0") == 0) {
+    } else if (version.compare("HTTP/2.0") == 0) {
         return THREE;
     }
     return INVALID_VERSION;
@@ -282,18 +314,24 @@ http_version_t HttpServer::GetVersion(const char* string) {
 ////////////////////////////////////////////////
 //              HttpRequest                   //
 ////////////////////////////////////////////////
-HttpRequest::HttpRequest(char* path, http_method_t method, http_version_t version) {
-    set_path(path);
-    this->method = method;
-    this->version = version;
+HttpRequest::HttpRequest(string path, http_method_t method, http_version_t version, HeaderOptions* options) {
+    Initialize(path, method, version, options);
 }
 
 HttpRequest::HttpRequest() {
-    method = INVALID_METHOD;
-    version = INVALID_VERSION;
+    Initialize("", INVALID_METHOD, INVALID_VERSION, NULL);
+}
+
+void HttpRequest::Initialize(string path, http_method_t method, http_version_t version, HeaderOptions* options) {
+    toolong = false;
+    this->path = path;
+    this->method = method;
+    this->version = version;
+    this->options = options;
 }
 
 void HttpRequest::Reset() {
+    path = "";
     method = INVALID_METHOD;
     version = INVALID_VERSION;
 }
@@ -304,17 +342,18 @@ HttpRequest::~HttpRequest() {
 ////////////////////////////////////////////////
 //              HttpResponse                  //
 ////////////////////////////////////////////////
-HttpResponse::HttpResponse(fstream* file, http_method_t method, http_version_t version, http_status_t status) {
-    this->file = file;
-    this->method = method;
-    this->version = version;
-    this->status = status;
-    Initialize();
+HttpResponse::HttpResponse(fstream* file, http_method_t method, http_version_t version, http_status_t status, HeaderOptions* options) {
+    Initialize(file, method, version, status, options);
 }
 
-void HttpResponse::Initialize() {
+HttpResponse::HttpResponse() {
+    stringrep = "";
+    method = INVALID_METHOD;
+    version = INVALID_VERSION;
+}
+
+void HttpResponse::Initialize(fstream* file, http_method_t method, http_version_t version, http_status_t status, HeaderOptions* options) {
     // Create the string representation 
-    int count = 0;
     int index = 0;
     char c;
     string body;
@@ -348,12 +387,8 @@ void HttpResponse::Initialize() {
     stringrep += body;
 }
 
-HttpResponse::HttpResponse() {
-    method = INVALID_METHOD;
-    version = INVALID_VERSION;
-}
-
 void HttpResponse::Reset() {
+    stringrep = "";
     method = INVALID_METHOD;
     version = INVALID_VERSION;
 }

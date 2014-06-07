@@ -13,14 +13,14 @@ class SocketServer {
 private:
     // Addresses for the server and the client
     struct sockaddr_in serveraddr;
-    struct sockaddr_in client;
+    struct sockaddr_in clientaddr;
     socklen_t address_len;
+    char peername[INET_ADDRSTRLEN];
     
     // Socket file descriptors
     int listening;
     int connection;
     char recvbuf[BUFFER_LENGTH + 1];
-
 public:
     SocketServer();
     ~SocketServer();
@@ -34,6 +34,7 @@ public:
 
 class HttpServer {
 private: 
+    double elapsedtime;
     SocketServer server;
 public:
     HttpServer();
@@ -42,8 +43,8 @@ public:
     bool ParseRequest(HttpRequest& request, const char* recvbuf);
     bool HandleRequest(HttpRequest& request);
     string CreateResponse(HttpResponse& response, fstream& file);
-    http_method_t GetMethod(const char* string);
-    http_version_t GetVersion(const char* string);
+    http_method_t GetMethod(const string method);
+    http_version_t GetVersion(const string version);
 };
 
 #endif
