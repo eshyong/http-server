@@ -1,32 +1,35 @@
+#pragma once
 #ifndef HTTP_H
 #define HTTP_H
 
 #include <iostream>
+#include <vector>
 
 #define CRLF      "\r\n"
 #define SPACE     " "
 #define DIRECTORY "test"
 
-#define BACKLOG       10
-#define BODY_LENGTH   1023
-#define BUFFER_LENGTH 4095
-#define PORT          8000
-#define SLEEP_MSEC    5000
-#define TIME_OUT      5.0
+#define BODY_LENGTH    1023
+#define BUFFER_LENGTH  8191
+#define URI_MAX_LENGTH 4095
+#define PORT           8000
+#define SLEEP_MSEC     5000
+#define TIME_OUT       5.0
 
 using std::fstream;
 using std::string;
+using std::vector;
 
 enum http_method_t {
-    INVALID_METHOD = -1, GET, POST, PUT, DELETE
+    INVALID_METHOD = -1, GET, POST, PUT, DELETE,
 };
 
 enum http_version_t {
-    INVALID_VERSION = -1, ONE, TWO, THREE
+    INVALID_VERSION = -1, ONE_POINT_ZERO, ONE_POINT_ONE, TWO_POINT_ZERO,
 };
 
 enum http_status_t {
-    CONTINUE = 0, OK, BAD_REQUEST, NOT_FOUND, REQUEST_ENTITY_TOO_LARGE, NOT_IMPLEMENTED,
+    CONTINUE = 0, OK, BAD_REQUEST, NOT_FOUND, REQUEST_ENTITY_TOO_LARGE, REQUEST_URI_TOO_LARGE, NOT_IMPLEMENTED,
 };
 
 const string versions[] = {
@@ -34,74 +37,96 @@ const string versions[] = {
 };
 
 const string statuses[] = {
-    "100 Continue", "200 OK", "400 Bad Request", "404 Not Found", "413 Request Entity Too Large", "501 Not Implemented",
+    "100 Continue", "200 OK", "400 Bad Request", "404 Not Found", "413 Request Entity Too Large", "414 Request URI Too Large", "501 Not Implemented",
 };
 
-class HeaderOptions {
-
+class Option {
+public:
+    // Header options, e.g. name="Content-Length", value="10"
+    string name;
+    string value;
+    
+    // Constructor 
+    Option(string name, string value) {
+        this->name = name;
+        this->value = value;
+    }
 };
 
-class HttpRequest {
-private:
-    HeaderOptions* options;
-    string path;
+class HttpMessage {
+protected:
+    vector<const Option*> options;
     http_method_t method;
     http_version_t version;
+public:
+    HttpMessage(http_method_t method, http_version_t version);
+    HttpMessage();
+    ~HttpMessage();
+    void Initialize(http_method_t method, http_version_t version);
+    void ParseOptions(const char* buffer, int index);
+    virtual void Reset() = 0;
+    
+    // Getters
+    vector<const Option*> get_options() { return options; }
+    http_method_t get_method() { return method; }
+    http_version_t get_version() { return version; }
+
+    // Setters
+    void set_method(http_method_t method) { this->method = method; }
+    void set_version(http_version_t version) { this->version = version; }
+};
+
+class HttpRequest: public HttpMessage {
+private:
+    string path;
+    string query;
     bool toolong;
 public:
-    HttpRequest(string path, http_method_t method, http_version_t version, HeaderOptions* options);
+    HttpRequest(http_method_t method, http_version_t version, string path, string query);
     HttpRequest();
     ~HttpRequest();
 
     // Initialization method
-    void Initialize(string path, http_method_t method, http_version_t version, HeaderOptions* options);
+    void Initialize(http_method_t method, http_version_t version, string path, string query);
+    void Reset();
 
     // Getters
     string get_path() { return path; }
-    http_method_t get_method() { return method; }
-    http_version_t get_version() { return version; }
+    string get_query() { return query; }
     bool get_flag() { return toolong; }
 
     // Setters
     void set_path(string path) { this->path = path; }
-    void set_method(http_method_t method) { this->method = method; }
-    void set_version(http_version_t version) { this->version = version; } 
+    void set_query(string query) { this->query = query; }
     void set_flag(bool value) { toolong = value; }
-    void Reset();
 };
 
-class HttpResponse {
+class HttpResponse: public HttpMessage {
 private:
-    HeaderOptions* options;
     string stringrep;
     int contentlen;
-    http_method_t method;
-    http_version_t version;
     http_status_t status;
 public:
     // Constructors and destructors
-    HttpResponse(fstream* file, http_method_t method, http_version_t version, http_status_t status, HeaderOptions* options);
+    HttpResponse(http_method_t method, http_version_t version, fstream* file, http_status_t status);
     HttpResponse();
     ~HttpResponse();
 
     // Initialization method
-    void Initialize(fstream* file, http_method_t method, http_version_t version, http_status_t status, HeaderOptions* options);
+    void Initialize(http_method_t method, http_version_t version, fstream* file, http_status_t status);
+    void Reset();
 
     // Getters
     int get_content_length() { return contentlen; }
-    http_method_t get_method() { return method; }
-    http_version_t get_version() { return version; }
     http_status_t get_status() { return status; }
 
     // Setters
-    void set_method(http_method_t method) { this->method = method; }
-    void set_version(http_version_t version) { this->version = version; } 
     void set_status(http_status_t status) { this->status = status; }
 
     // String representation
     string to_string() { return stringrep; }
-    void Reset();
 };
 
 #endif
+
 // End of header

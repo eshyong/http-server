@@ -14,6 +14,7 @@ using std::endl;
 using std::fstream;
 using std::string;
 using std::to_string;
+using std::vector;
 
 static bool running = true;
 
@@ -29,6 +30,28 @@ void handleSigchld(int signum) {
     // Prevent zombie processes
     int status;
     while (waitpid(-1, &status, WNOHANG) == 0);
+}
+
+////////////////////////////////////////////////
+//              Misc Helpers                  //
+////////////////////////////////////////////////
+char hexToAscii(string hex) {
+    int ascii = 0;
+    int num;
+    if (isalpha(hex[0])) {
+        num = 16 * (hex[0] - 55);
+    } else {
+        num = 16 * (hex[0] - 48);
+    }
+    ascii += num;
+
+    if (isalpha(hex[1])) {
+        num = hex[1] - 55;
+    } else {
+        num = hex[1] - 48;
+    }
+    ascii += num;
+    return (char) ascii;
 }
 
 ////////////////////////////////////////////////
@@ -174,8 +197,9 @@ void HttpServer::Run() {
                 elapsedtime = difftime(end, begin);
                 
                 do {
-                    if (server.Receive() && ParseRequest(request, server.get_buffer())) {
-                        // Handle request and response
+                    if (server.Receive()) { 
+                        // Handle request and send response
+                        ParseRequest(request, server.get_buffer());
                         HandleRequest(request);
                     }
                     // Calculate elapsed time
@@ -199,12 +223,14 @@ void HttpServer::Run() {
     cout << "Server shutting down...\n";
 }
 
-bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
+void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     int i = 0;
     http_method_t method;
     http_version_t version;
     string buffer = "";
     string path = "";
+    string query = "";
+    string uri = "";
 
     // Get method string
     while (i <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
@@ -219,13 +245,19 @@ bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
         cout << "Unrecognized HTTP method\n";
     }
 
-    // Get folder path
-    path = DIRECTORY;
+    // Get URI
     while (i <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
-        path += recvbuf[i];
+        uri += recvbuf[i];
         i++;
     }
+    path = DIRECTORY;
+
+    // Parse URI, sanitizing output
+    ParseUri(uri, path, query);
     i++;
+    if (path.length() > URI_MAX_LENGTH) {
+        cout << "Request URI too long.\n";
+    }
 
     // Get version number
     buffer = "";
@@ -233,7 +265,11 @@ bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
         buffer += recvbuf[i];
         i++;
     }
-    i++;
+
+    // Skip to next line
+    while (isspace(recvbuf[i])) {
+        i++;
+    }
 
     // Parse version number
     version = GetVersion(buffer);
@@ -242,20 +278,21 @@ bool HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     }
 
     // Fill request struct
-    request.Initialize(path, method, version, NULL);
-    return true;
+    request.Initialize(method, version, path, query);
+    request.ParseOptions(recvbuf, i);
 }
 
 bool HttpServer::HandleRequest(HttpRequest& request) {
     HttpResponse response;
-    bool flag = request.get_flag();
+    bool toolong = request.get_flag();
     http_status_t status = OK;
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
     string path = request.get_path();
     fstream file;
     
-    if (flag) {
+    // HTTP flow diagram starts here
+    if (toolong) {
         // Request entity too large
         status = REQUEST_ENTITY_TOO_LARGE;
     } else if (version == INVALID_VERSION) {
@@ -264,13 +301,16 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     } else if (method == INVALID_METHOD) {
         // Unrecognized method
         status = NOT_IMPLEMENTED;
+    } else if (path.length() > URI_MAX_LENGTH) {
+        // Request URI too large
+        status = REQUEST_URI_TOO_LARGE;
     } else {
         // Handle each HTTP method
         if (method == GET) {
             // Get URI resource by opening file
             file.open(path, fstream::in);
             if (!file.is_open()) {
-                // 404 Error
+                // Not found
                 perror("open");
                 status = NOT_FOUND;
             }
@@ -282,7 +322,7 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     }
 
     // Send response
-    response.Initialize(&file, method, version, status, NULL);
+    response.Initialize(method, version, &file, status);
     server.SendResponse(response.to_string());
     return true;
 }
@@ -302,65 +342,181 @@ http_method_t HttpServer::GetMethod(const string method) {
 
 http_version_t HttpServer::GetVersion(const string version) {
     if (version.compare("HTTP/1.0") == 0) {
-        return ONE;
+        return ONE_POINT_ZERO;
     } else if (version.compare("HTTP/1.1") == 0) {
-        return TWO;
+        return ONE_POINT_ONE;
     } else if (version.compare("HTTP/2.0") == 0) {
-        return THREE;
+        return TWO_POINT_ZERO;
     }
     return INVALID_VERSION;
+}
+
+void HttpServer::ParseUri(string& uri, string& path, string& query) {
+    int relpath = uri.find("/..");
+    int length;
+    int i = 0;
+    string hex = "";
+    char c;
+
+    // Sanitize string, checking for weird relative paths such as "/.."
+    // "/." is ok
+    while (relpath != string::npos) {
+        uri.erase(relpath, 3);
+        relpath = uri.find("/..");
+    }
+    length = uri.length();
+    
+    // Get path right before query, while sanitizing unsafe ascii characters
+    // "%HEX" is interpreted as the character with ascii value HEX
+    // "+" is interpreted as a space character
+    while (i <= length && uri[i] != '?') {
+        if (uri[i] == '%') {
+            // Unsafe ascii conversion
+            i++;
+            hex += uri[i];
+            i++;
+            hex += uri[i];
+            c = hexToAscii(hex);
+        } else if (uri[i] == '+') {
+            // Space
+            c = ' ';
+        } else {
+            // Safe ascii
+            c = uri[i];   
+        }
+        path += c;
+        i++;
+    }
+    // Skip past '?'
+    i++;
+
+    // Get query
+    while (i <= length) {
+        query += uri[i];
+        i++;
+    }
+    cout << "Path: " << path << endl;
+    cout << "Query: " << query << endl;
+}
+
+////////////////////////////////////////////////
+//              HttpMessage                   //
+////////////////////////////////////////////////
+
+HttpMessage::HttpMessage(http_method_t method, http_version_t version) {
+    Initialize(method, version);
+}
+
+HttpMessage::HttpMessage() {
+    Initialize(INVALID_METHOD, INVALID_VERSION);
+}
+
+HttpMessage::~HttpMessage() {
+    while (!options.empty()) {
+        delete options.back();
+        options.pop_back();
+    }
+}
+
+void HttpMessage::Initialize(http_method_t method, http_version_t version) {
+    this->method = method;
+    this->version = version;
+}
+
+void HttpMessage::ParseOptions(const char* buffer, int index) {
+    int i = index;
+    int length = strlen(buffer);
+    string name = "";
+    string value = "";
+    const Option* option;
+
+    while (i <= length) {
+        // Get name of header option
+        while (i <= length && buffer[i] != ':') {
+            name += buffer[i];
+            i++;
+        }
+        // Increment twice for : 
+        i += 2;
+
+        // Get value of header option
+        while (i <= length && buffer[i] != '\r') {
+            value += buffer[i];
+            i++;
+        }
+        // Increment twice for \r\n
+        i += 2;
+        
+        // Add new option
+        if (!isspace(name.c_str()[0])) {
+            option = new Option(name, value);
+            options.push_back(option);
+        }
+        
+        // Reset fields
+        name = "";
+        value = "";
+    }
 }
 
 ////////////////////////////////////////////////
 //              HttpRequest                   //
 ////////////////////////////////////////////////
-HttpRequest::HttpRequest(string path, http_method_t method, http_version_t version, HeaderOptions* options) {
-    Initialize(path, method, version, options);
+HttpRequest::HttpRequest(http_method_t method, http_version_t version, string path, string query):
+             HttpMessage(method, version) {
+    Initialize(method, version, path, query);
 }
 
-HttpRequest::HttpRequest() {
-    Initialize("", INVALID_METHOD, INVALID_VERSION, NULL);
+HttpRequest::HttpRequest(): HttpMessage() {
+    Initialize(INVALID_METHOD, INVALID_VERSION, "", "");
 }
 
-void HttpRequest::Initialize(string path, http_method_t method, http_version_t version, HeaderOptions* options) {
+void HttpRequest::Initialize(http_method_t method, http_version_t version, string path, string query) {
+    // Call parent initialization
+    HttpMessage::Initialize(method, version);
+
     toolong = false;
     this->path = path;
-    this->method = method;
-    this->version = version;
-    this->options = options;
+    this->query = query;
 }
 
 void HttpRequest::Reset() {
     path = "";
     method = INVALID_METHOD;
     version = INVALID_VERSION;
+    while (!options.empty()) {
+        delete options.back();
+        options.pop_back();
+    }
 }
 
-HttpRequest::~HttpRequest() {
-}
+HttpRequest::~HttpRequest() {}
 
 ////////////////////////////////////////////////
 //              HttpResponse                  //
 ////////////////////////////////////////////////
-HttpResponse::HttpResponse(fstream* file, http_method_t method, http_version_t version, http_status_t status, HeaderOptions* options) {
-    Initialize(file, method, version, status, options);
+HttpResponse::HttpResponse(http_method_t method, http_version_t version, fstream* file, http_status_t status):
+              HttpMessage(method, version) {
+    Initialize(method, version, file, status);
 }
 
-HttpResponse::HttpResponse() {
+HttpResponse::HttpResponse():
+              HttpMessage(INVALID_METHOD, INVALID_VERSION) {
     stringrep = "";
-    method = INVALID_METHOD;
-    version = INVALID_VERSION;
 }
 
-void HttpResponse::Initialize(fstream* file, http_method_t method, http_version_t version, http_status_t status, HeaderOptions* options) {
+void HttpResponse::Initialize(http_method_t method, http_version_t version, fstream* file, http_status_t status) {
     // Create the string representation 
+    string body = "";
     int index = 0;
+    int contentlen;
     char c;
-    string body;
+
+    // Call parent initialization
+    HttpMessage::Initialize(method, version);
 
     // Create a buffer and fill with information from response
     stringrep = "";
-    body = "";
 
     // Check method type
     if (method == GET && status == OK) {
@@ -370,6 +526,7 @@ void HttpResponse::Initialize(fstream* file, http_method_t method, http_version_
             index++;
         }
     }
+    contentlen = body.length() == 0 ? 0 : body.length() - 1;
 
     // Append status line, options, and body to buffer
     stringrep += versions[version];
@@ -381,7 +538,7 @@ void HttpResponse::Initialize(fstream* file, http_method_t method, http_version_
     stringrep += "Content-Type: text/html";
     stringrep += CRLF;
     stringrep += "Content-Length: ";
-    stringrep += ::to_string(body.length() - 1);
+    stringrep += std::to_string(contentlen);
     stringrep += CRLF;
     stringrep += CRLF;
     stringrep += body;
@@ -391,16 +548,18 @@ void HttpResponse::Reset() {
     stringrep = "";
     method = INVALID_METHOD;
     version = INVALID_VERSION;
+    while (!options.empty()) {
+        delete options.back();
+        options.pop_back();
+    }
 }
 
 HttpResponse::~HttpResponse() {
+    while (!options.empty()) {
+        // Clean up options
+        delete options.back();
+        options.pop_back();
+    }
 }
 
-////////////////////////////////////////////////
-//                  Main                      //
-////////////////////////////////////////////////
-int main() {
-    HttpServer http;
-    http.Run();
-    return 0;
-}
+// End of file
