@@ -230,6 +230,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     string buffer = "";
     string path = "";
     string query = "";
+    string type = "";
     string uri = "";
 
     // Get method string
@@ -253,7 +254,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     path = DIRECTORY;
 
     // Parse URI, sanitizing output
-    ParseUri(uri, path, query);
+    ParseUri(uri, path, query, type);
     i++;
     if (path.length() > URI_MAX_LENGTH) {
         cout << "Request URI too long.\n";
@@ -278,7 +279,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     }
 
     // Fill request struct
-    request.Initialize(method, version, path, query);
+    request.Initialize(method, version, path, query, type);
     request.ParseOptions(recvbuf, i);
 }
 
@@ -289,6 +290,7 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
     string path = request.get_path();
+    string type = request.get_content_type();
     fstream file;
     
     // HTTP flow diagram starts here
@@ -322,7 +324,7 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     }
 
     // Send response
-    response.Initialize(method, version, &file, status);
+    response.Initialize(request, &file, status);
     server.SendResponse(response.to_string());
     return true;
 }
@@ -351,11 +353,33 @@ http_version_t HttpServer::GetVersion(const string version) {
     return INVALID_VERSION;
 }
 
-void HttpServer::ParseUri(string& uri, string& path, string& query) {
+string HttpServer::GetMimeType(string extension) {
+    if (extension.compare("txt") == 0) {
+        return "text/plain";
+    } else if (extension.compare("html") == 0) {
+        return "text/html";
+    } else if (extension.compare("js") == 0) {
+        return "application/js";
+    } else if (extension.compare("css") == 0) {
+        return "text/css";
+    } else if (extension.compare("png") == 0) {
+        return "image/png";
+    } else if (extension.compare("jpg") == 0) {
+        return "image/jpeg";
+    } else if (extension.compare("gif") == 0) {
+        return "image/gif";
+    } else {
+        return "unknown";
+    }
+}
+
+void HttpServer::ParseUri(string& uri, string& path, string& query, string& type) {
     int relpath = uri.find("/..");
     int length;
     int i = 0;
+    int lastdot = 0;
     string hex = "";
+    string extension = "";
     char c;
 
     // Sanitize string, checking for weird relative paths such as "/.."
@@ -387,6 +411,7 @@ void HttpServer::ParseUri(string& uri, string& path, string& query) {
         path += c;
         i++;
     }
+
     // Skip past '?'
     i++;
 
@@ -395,8 +420,21 @@ void HttpServer::ParseUri(string& uri, string& path, string& query) {
         query += uri[i];
         i++;
     }
+
+    // Get type from path
+    i = path.length();
+    while (i > 0 && path[i] != '.') {
+        i--;
+    }
+    i++;
+    while (i <= path.length() && !isspace(path[i]) && path[i] != (char) NULL) {
+        extension += path[i];
+        i++;
+    }
+    type = GetMimeType(extension);
     cout << "Path: " << path << endl;
     cout << "Query: " << query << endl;
+    cout << "Type: " << type << endl;
 }
 
 ////////////////////////////////////////////////
@@ -462,26 +500,28 @@ void HttpMessage::ParseOptions(const char* buffer, int index) {
 ////////////////////////////////////////////////
 //              HttpRequest                   //
 ////////////////////////////////////////////////
-HttpRequest::HttpRequest(http_method_t method, http_version_t version, string path, string query):
+HttpRequest::HttpRequest(http_method_t method, http_version_t version, string path, string query, string type):
              HttpMessage(method, version) {
-    Initialize(method, version, path, query);
+    Initialize(method, version, path, query, type);
 }
 
 HttpRequest::HttpRequest(): HttpMessage() {
-    Initialize(INVALID_METHOD, INVALID_VERSION, "", "");
+    Initialize(INVALID_METHOD, INVALID_VERSION, "", "", "");
 }
 
-void HttpRequest::Initialize(http_method_t method, http_version_t version, string path, string query) {
+void HttpRequest::Initialize(http_method_t method, http_version_t version, string path, string query, string type) {
     // Call parent initialization
     HttpMessage::Initialize(method, version);
 
     toolong = false;
     this->path = path;
     this->query = query;
+    this->type = type;
 }
 
 void HttpRequest::Reset() {
     path = "";
+    type = "";
     method = INVALID_METHOD;
     version = INVALID_VERSION;
     while (!options.empty()) {
@@ -495,9 +535,9 @@ HttpRequest::~HttpRequest() {}
 ////////////////////////////////////////////////
 //              HttpResponse                  //
 ////////////////////////////////////////////////
-HttpResponse::HttpResponse(http_method_t method, http_version_t version, fstream* file, http_status_t status):
-              HttpMessage(method, version) {
-    Initialize(method, version, file, status);
+HttpResponse::HttpResponse(HttpRequest request, fstream* file, http_status_t status):
+              HttpMessage(request.get_method(), request.get_version()) {
+    Initialize(request, file, status);
 }
 
 HttpResponse::HttpResponse():
@@ -505,9 +545,12 @@ HttpResponse::HttpResponse():
     stringrep = "";
 }
 
-void HttpResponse::Initialize(http_method_t method, http_version_t version, fstream* file, http_status_t status) {
+void HttpResponse::Initialize(HttpRequest request, fstream* file, http_status_t status) {
     // Create the string representation 
     string body = "";
+    string type = request.get_content_type();
+    http_method_t method = request.get_method();
+    http_version_t version = request.get_version();
     int index = 0;
     int contentlen;
     char c;
@@ -533,13 +576,17 @@ void HttpResponse::Initialize(http_method_t method, http_version_t version, fstr
     stringrep += SPACE;
     stringrep += statuses[status];
     stringrep += CRLF;
-    stringrep += "Accept-Ranges: bytes";
-    stringrep += CRLF;
-    stringrep += "Content-Type: text/html";
-    stringrep += CRLF;
-    stringrep += "Content-Length: ";
-    stringrep += std::to_string(contentlen);
-    stringrep += CRLF;
+
+    // For GET only
+    if (method == GET) {
+        stringrep += "Content-Type: ";
+        stringrep += type;
+        stringrep += CRLF;
+        stringrep += "Content-Length: ";
+        stringrep += std::to_string(contentlen);
+        stringrep += CRLF;
+    }
+
     stringrep += CRLF;
     stringrep += body;
 }

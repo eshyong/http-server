@@ -9,7 +9,7 @@
 #define SPACE     " "
 #define DIRECTORY "test"
 
-#define BODY_LENGTH    1023
+#define BODY_LENGTH    8191
 #define BUFFER_LENGTH  8191
 #define URI_MAX_LENGTH 4095
 #define PORT           8000
@@ -80,19 +80,21 @@ class HttpRequest: public HttpMessage {
 private:
     string path;
     string query;
+    string type;
     bool toolong;
 public:
-    HttpRequest(http_method_t method, http_version_t version, string path, string query);
+    HttpRequest(http_method_t method, http_version_t version, string path, string query, string type);
     HttpRequest();
     ~HttpRequest();
 
     // Initialization method
-    void Initialize(http_method_t method, http_version_t version, string path, string query);
+    void Initialize(http_method_t method, http_version_t version, string path, string query, string type);
     void Reset();
 
     // Getters
     string get_path() { return path; }
     string get_query() { return query; }
+    string get_content_type() { return type; }
     bool get_flag() { return toolong; }
 
     // Setters
@@ -108,12 +110,12 @@ private:
     http_status_t status;
 public:
     // Constructors and destructors
-    HttpResponse(http_method_t method, http_version_t version, fstream* file, http_status_t status);
+    HttpResponse(HttpRequest request, fstream* file, http_status_t status);
     HttpResponse();
     ~HttpResponse();
 
     // Initialization method
-    void Initialize(http_method_t method, http_version_t version, fstream* file, http_status_t status);
+    void Initialize(HttpRequest request, fstream* file, http_status_t status);
     void Reset();
 
     // Getters

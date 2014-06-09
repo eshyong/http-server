@@ -59,7 +59,8 @@ public:
     // Helper methods
     http_method_t GetMethod(const string method);
     http_version_t GetVersion(const string version);
-    void ParseUri(string& uri, string& path, string& query);
+    string GetMimeType(string extension);
+    void ParseUri(string& uri, string& path, string& query, string& type);
 };
 
 #endif
