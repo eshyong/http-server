@@ -1,5 +1,4 @@
-client
-server
+grizzly
 *.o
 *.dSYM
 *.swp
