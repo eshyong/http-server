@@ -10,6 +10,10 @@
 #include <fstream>
 #include "http.h"
 
+enum server_type {
+    MPROCESS = 0, MTHREADED, EVENTED,
+};
+
 class SocketServer {
 private:
     // Addresses for the server and the client
@@ -32,26 +36,29 @@ public:
 
     // Socket call wrapper methods
     bool Connect();
-    bool Receive();
+    bool Receive(bool verbose);
     bool SendResponse(string buffer);
     bool Close();
 };
 
 class HttpServer {
 private: 
-    double elapsedtime;
     SocketServer server;
+    double elapsedtime;
 public:
     // Constructor/Destructor
     HttpServer();
     ~HttpServer();
 
     // Event loop 
-    void Run();
+    void Run(server_type type, bool verbose);
+    void RunMultiProcessed(bool verbose);
+    void RunMultiThreaded(bool verbose);
+    void RunEvented(bool verbose);
 
     // Request handling methods
     void ParseRequest(HttpRequest& request, const char* recvbuf);
-    bool HandleRequest(HttpRequest& request);
+    bool HandleRequest(HttpRequest& request, bool verbose);
 
     // Response creating method
     string CreateResponse(HttpResponse& response, fstream& file);

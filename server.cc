@@ -129,14 +129,16 @@ bool SocketServer::Connect() {
     return true;
 }
 
-bool SocketServer::Receive() {
+bool SocketServer::Receive(bool verbose) {
     int count = recv(connection, recvbuf, BUFFER_LENGTH, 0);
     if (count <= 0) {
         return false;
     }
+    if (verbose) {
+        cout << "Received " << count << " bytes from " << peername << ":\n";
+        cout << recvbuf << endl;
+    }
     recvbuf[count] = (char) NULL;
-    cout << "Received " << count << " bytes from " << peername << ":\n";
-    cout << recvbuf << endl;
     return true;
 }
 
@@ -166,16 +168,28 @@ HttpServer::HttpServer() { elapsedtime = 0.0; }
 
 HttpServer::~HttpServer() {}
 
-void HttpServer::Run() {
+void HttpServer::Run(server_type type, bool verbose) {
+    // Add signal handlers
+    signal(SIGINT, handleSigint);
+    signal(SIGCHLD, handleSigchld);
+
+    if (type == MPROCESS) {
+        RunMultiProcessed(verbose);
+    } else if (type == MTHREADED) {
+        RunMultiThreaded(verbose);
+    } else if (type == EVENTED) {
+        RunEvented(verbose);
+    }
+}
+
+void HttpServer::RunMultiProcessed(bool verbose) {
     pid_t pid;
     time_t begin;
     time_t end;
     int status;
-    cout << "Server starting...\n\n";
-
-    // Add signal handlers
-    signal(SIGINT, handleSigint);
-    signal(SIGCHLD, handleSigchld);
+    if (verbose) {
+        cout << "Server starting...\n\n";
+    }
 
     // Event loop
     while (running) {
@@ -197,10 +211,10 @@ void HttpServer::Run() {
                 elapsedtime = difftime(end, begin);
                 
                 do {
-                    if (server.Receive()) { 
+                    if (server.Receive(verbose)) { 
                         // Handle request and send response
                         ParseRequest(request, server.get_buffer());
-                        HandleRequest(request);
+                        HandleRequest(request, verbose);
                     }
                     // Calculate elapsed time
                     time(&end);
@@ -220,7 +234,19 @@ void HttpServer::Run() {
         // Sleep if not connected
         usleep(SLEEP_MSEC);
     }
-    cout << "Server shutting down...\n";
+    if (verbose) {
+        cout << "Server shutting down...\n";
+    }
+}
+
+void HttpServer::RunMultiThreaded(bool verbose) {
+    cout << "Not implemented yet\n";
+    exit(EXIT_SUCCESS);
+}
+
+void HttpServer::RunEvented(bool verbose) {
+    cout << "Not implemented yet\n";
+    exit(EXIT_SUCCESS);
 }
 
 void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
@@ -283,7 +309,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     request.ParseOptions(recvbuf, i);
 }
 
-bool HttpServer::HandleRequest(HttpRequest& request) {
+bool HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
     HttpResponse response;
     bool toolong = request.get_flag();
     http_status_t status = OK;
@@ -324,7 +350,10 @@ bool HttpServer::HandleRequest(HttpRequest& request) {
     }
 
     // Send response
-    response.Initialize(request, &file, status);
+    response.CreateResponseString(request, &file, status);
+    if (verbose) {
+        cout << endl << "Response: " << response.to_string() << endl << endl;
+    }
     server.SendResponse(response.to_string());
     return true;
 }
@@ -377,7 +406,6 @@ void HttpServer::ParseUri(string& uri, string& path, string& query, string& type
     int relpath = uri.find("/..");
     int length;
     int i = 0;
-    int lastdot = 0;
     string hex = "";
     string extension = "";
     char c;
@@ -431,10 +459,8 @@ void HttpServer::ParseUri(string& uri, string& path, string& query, string& type
         extension += path[i];
         i++;
     }
+    // Interpret MIME type using extension string
     type = GetMimeType(extension);
-    cout << "Path: " << path << endl;
-    cout << "Query: " << query << endl;
-    cout << "Type: " << type << endl;
 }
 
 ////////////////////////////////////////////////
@@ -537,15 +563,16 @@ HttpRequest::~HttpRequest() {}
 ////////////////////////////////////////////////
 HttpResponse::HttpResponse(HttpRequest request, fstream* file, http_status_t status):
               HttpMessage(request.get_method(), request.get_version()) {
-    Initialize(request, file, status);
+    CreateResponseString(request, file, status);
 }
 
 HttpResponse::HttpResponse():
               HttpMessage(INVALID_METHOD, INVALID_VERSION) {
+    status = OK;
     stringrep = "";
 }
 
-void HttpResponse::Initialize(HttpRequest request, fstream* file, http_status_t status) {
+void HttpResponse::CreateResponseString(HttpRequest request, fstream* file, http_status_t status) {
     // Create the string representation 
     string body = "";
     string type = request.get_content_type();
@@ -578,7 +605,9 @@ void HttpResponse::Initialize(HttpRequest request, fstream* file, http_status_t 
     stringrep += CRLF;
 
     // For GET only
-    if (method == GET) {
+    if (method == GET && status == OK) {
+        stringrep += "Accept-Ranges: bytes";
+        stringrep += CRLF;
         stringrep += "Content-Type: ";
         stringrep += type;
         stringrep += CRLF;

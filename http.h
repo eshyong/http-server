@@ -115,7 +115,7 @@ public:
     ~HttpResponse();
 
     // Initialization method
-    void Initialize(HttpRequest request, fstream* file, http_status_t status);
+    void CreateResponseString(HttpRequest request, fstream* file, http_status_t status);
     void Reset();
 
     // Getters
