@@ -69,21 +69,6 @@ void getArgsFromQuery(string& query, vector<const char*>& args) {
     bool equals = false;
     string* arg;
 
-    while (index < length) {
-        // Start of valueN substr
-        if (query[index] == '=') {
-            begin = index + 1;
-        }
-
-        // end of valueN substr
-        if (query[index] == '&') {
-            arg = new string(query.substr(begin, index - begin));
-            args.push_back(arg->c_str());
-        }
-        index++;
-    }
-    arg = new string(query.substr(begin, string::npos));
-    args.push_back(arg->c_str());
 }
 
 ////////////////////////////////////////////////
@@ -620,7 +605,9 @@ void HttpResponse::CreateResponseString(HttpRequest request, http_status_t statu
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
     pid_t pid;
+    int begin = 0;
     int index = 0;
+    int querylen = query.length();
     int contentlen;
     int error;
     char c;
@@ -640,35 +627,28 @@ void HttpResponse::CreateResponseString(HttpRequest request, http_status_t statu
             //cout.rdbuf(buffer.rdbuf());
 
             // Create a php command
-            command = "php";
-            args.push_back(command.c_str());
-            args.push_back(path.c_str());
+            command = "php ";
+            command += path;
+            command += SPACE;
             
             // Parse query to get php arguments
-            getArgsFromQuery(query, args);
-            for (auto arg = args.begin(); arg != args.end(); arg++) {
-                cout << *arg << endl;
+            while (index < querylen) {
+                // Start of valueN substr
+                if (query[index] == '=') {
+                    begin = index + 1;
+                }
+
+                // end of valueN substr
+                if (query[index] == '&') {
+                    command += query.substr(begin, index - begin);
+                    command += SPACE;
+                }
+                index++;
             }
+            command += query.substr(begin, string::npos);
 
             // Fork and execute php code
-            pid = fork();
-
-            if (pid < 0) {
-                // Forking error
-                perror("fork");
-                return;
-            } else if (pid == 0) {
-                // Child process
-                execl(command.c_str(), args[0]);
-                perror("execl");
-                exit(EXIT_FAILURE);
-            } else {
-                // Parent process
-                wait(&error);
-            }
-            for (int i = 2; i < args.size(); i++) {
-                delete args[i];
-            }
+            system(command.c_str());
 
             //body += buffer.str();
             //cout.rdbuf(oldcout);
