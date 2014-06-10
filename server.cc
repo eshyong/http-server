@@ -4,6 +4,7 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
+#include <sstream>
 #include <fcntl.h>
 #include "http.h"
 #include "server.h"
@@ -12,7 +13,10 @@ using std::cerr;
 using std::cout;
 using std::endl;
 using std::fstream;
+using std::streambuf;
 using std::string;
+using std::stringstream;
+using std::system;
 using std::to_string;
 using std::vector;
 
@@ -52,6 +56,39 @@ char hexToAscii(string hex) {
     }
     ascii += num;
     return (char) ascii;
+}
+
+void getArgsFromQuery(string query, vector<const char*>& args) {
+    // Queries come in the following form:
+    // query = "name1=value1&name2=value2 ... nameN=valueN"
+    // We will parse value1 and value2, and append it to args
+    int index = 0;
+    int begin = 0;
+    int length = query.length();
+    bool equals = false;
+    string arg;
+
+    while (index < length) {
+        // Start of valueN substr
+        if (query[index] == '=') {
+            begin = index + 1;
+        }
+
+        // end of valueN substr
+        if (query[index] == '&' || isspace(query[index])) {
+            arg = query.substr(begin, index - begin);
+            args.push_back(arg.c_str());
+            cout << args.back() << endl;
+        }
+        index++;
+    }
+    arg = query.substr(begin, index - begin);
+    args.push_back(arg.c_str());
+    cout << args.back() << endl;
+    
+    for (auto it = args.begin(); it != args.end(); it++) {
+        cout << *it << endl;
+    }
 }
 
 ////////////////////////////////////////////////
@@ -350,7 +387,7 @@ bool HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
     }
 
     // Send response
-    response.CreateResponseString(request, &file, status);
+    response.CreateResponseString(request, status);
     if (verbose) {
         cout << endl << "Response: " << response.to_string() << endl << endl;
     }
@@ -389,6 +426,8 @@ string HttpServer::GetMimeType(string extension) {
         return "text/html";
     } else if (extension.compare("js") == 0) {
         return "application/js";
+    } else if (extension.compare("php") == 0) {
+        return "application/php";
     } else if (extension.compare("css") == 0) {
         return "text/css";
     } else if (extension.compare("png") == 0) {
@@ -403,7 +442,7 @@ string HttpServer::GetMimeType(string extension) {
 }
 
 void HttpServer::ParseUri(string& uri, string& path, string& query, string& type) {
-    int relpath = uri.find("/..");
+    int relpath = uri.find(PREVDIR);
     int length;
     int i = 0;
     string hex = "";
@@ -413,8 +452,8 @@ void HttpServer::ParseUri(string& uri, string& path, string& query, string& type
     // Sanitize string, checking for weird relative paths such as "/.."
     // "/." is ok
     while (relpath != string::npos) {
-        uri.erase(relpath, 3);
-        relpath = uri.find("/..");
+        uri.erase(relpath, strlen(PREVDIR));
+        relpath = uri.find(PREVDIR);
     }
     length = uri.length();
     
@@ -459,6 +498,7 @@ void HttpServer::ParseUri(string& uri, string& path, string& query, string& type
         extension += path[i];
         i++;
     }
+
     // Interpret MIME type using extension string
     type = GetMimeType(extension);
 }
@@ -563,7 +603,6 @@ HttpRequest::~HttpRequest() {}
 ////////////////////////////////////////////////
 HttpResponse::HttpResponse(HttpRequest request, fstream* file, http_status_t status):
               HttpMessage(request.get_method(), request.get_version()) {
-    CreateResponseString(request, file, status);
 }
 
 HttpResponse::HttpResponse():
@@ -572,14 +611,23 @@ HttpResponse::HttpResponse():
     stringrep = "";
 }
 
-void HttpResponse::CreateResponseString(HttpRequest request, fstream* file, http_status_t status) {
+void HttpResponse::CreateResponseString(HttpRequest request, http_status_t status) {
     // Create the string representation 
+    fstream file;
+    streambuf* oldcout;
+    stringstream buffer;
+    vector<const char*> args;
     string body = "";
+    string path = request.get_path();
     string type = request.get_content_type();
+    string query = request.get_query();
+    string command = "";
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
+    pid_t pid;
     int index = 0;
     int contentlen;
+    int error;
     char c;
 
     // Call parent initialization
@@ -590,10 +638,46 @@ void HttpResponse::CreateResponseString(HttpRequest request, fstream* file, http
 
     // Check method type
     if (method == GET && status == OK) {
-        // Get all characters in file
-        while (file->good() && index <= BODY_LENGTH) {
-            body += (char) file->get();
-            index++;
+        if (strcmp(type.c_str(), "application/php") == 0) {
+            // Run a PHP program while redirecting stdout to a stream
+            // Keep a reference to old cout and redirect stdout
+            //oldcout = cout.rdbuf();
+            //cout.rdbuf(buffer.rdbuf());
+
+            // Create a php command
+            command = "php";
+            args.push_back(command.c_str());
+            args.push_back(path.c_str());
+            
+            // Parse query to get php arguments
+            getArgsFromQuery(query, args);
+
+            // Fork and execute php code
+            pid = fork();
+
+            if (pid < 0) {
+                // Forking error
+                perror("fork");
+                return;
+            } else if (pid == 0) {
+                // Child process
+                execl(command.c_str(), args[0]);
+                perror("execl");
+                exit(EXIT_FAILURE);
+            } else {
+                // Parent process
+                wait(&error);
+            }
+
+            //body += buffer.str();
+            //cout.rdbuf(oldcout);
+        } else {
+            // Get all characters in file
+            file.open(path, fstream::in);
+            while (file.good() && index <= BODY_LENGTH) {
+                body += (char) file.get();
+                index++;
+            }
         }
     }
     contentlen = body.length() == 0 ? 0 : body.length() - 1;
@@ -605,7 +689,7 @@ void HttpResponse::CreateResponseString(HttpRequest request, fstream* file, http
     stringrep += CRLF;
 
     // For GET only
-    if (method == GET && status == OK) {
+    if (status == OK && method == GET) {
         stringrep += "Accept-Ranges: bytes";
         stringrep += CRLF;
         stringrep += "Content-Type: ";

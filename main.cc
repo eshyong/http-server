@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
                 cout << "           -s/--silent: silences any HTTP requests and responses, which are usually written to stdout.\n";
                 exit(EXIT_SUCCESS);
             } else {
-                cout << "Unknown flag.\n";
+                cout << "Unknown flag/Not implemented yet.\n";
             }
         }
     }

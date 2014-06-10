@@ -8,13 +8,15 @@
 #define CRLF      "\r\n"
 #define SPACE     " "
 #define DIRECTORY "test"
+#define PREVDIR   "/.."
+#define PLAINTEXT "text/html"
 
 #define BODY_LENGTH    8191
 #define BUFFER_LENGTH  8191
 #define URI_MAX_LENGTH 4095
 #define PORT           8000
 #define SLEEP_MSEC     5000
-#define TIME_OUT       5.0
+#define TIME_OUT       2.5
 
 using std::fstream;
 using std::string;
@@ -115,7 +117,7 @@ public:
     ~HttpResponse();
 
     // Initialization method
-    void CreateResponseString(HttpRequest request, fstream* file, http_status_t status);
+    void CreateResponseString(HttpRequest request, http_status_t status);
     void Reset();
 
     // Getters
