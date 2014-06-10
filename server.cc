@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>
@@ -58,7 +59,7 @@ char hexToAscii(string hex) {
     return (char) ascii;
 }
 
-void getArgsFromQuery(string query, vector<const char*>& args) {
+void getArgsFromQuery(string& query, vector<const char*>& args) {
     // Queries come in the following form:
     // query = "name1=value1&name2=value2 ... nameN=valueN"
     // We will parse value1 and value2, and append it to args
@@ -66,7 +67,7 @@ void getArgsFromQuery(string query, vector<const char*>& args) {
     int begin = 0;
     int length = query.length();
     bool equals = false;
-    string arg;
+    string* arg;
 
     while (index < length) {
         // Start of valueN substr
@@ -75,20 +76,14 @@ void getArgsFromQuery(string query, vector<const char*>& args) {
         }
 
         // end of valueN substr
-        if (query[index] == '&' || isspace(query[index])) {
-            arg = query.substr(begin, index - begin);
-            args.push_back(arg.c_str());
-            cout << args.back() << endl;
+        if (query[index] == '&') {
+            arg = new string(query.substr(begin, index - begin));
+            args.push_back(arg->c_str());
         }
         index++;
     }
-    arg = query.substr(begin, index - begin);
-    args.push_back(arg.c_str());
-    cout << args.back() << endl;
-    
-    for (auto it = args.begin(); it != args.end(); it++) {
-        cout << *it << endl;
-    }
+    arg = new string(query.substr(begin, string::npos));
+    args.push_back(arg->c_str());
 }
 
 ////////////////////////////////////////////////
@@ -651,6 +646,9 @@ void HttpResponse::CreateResponseString(HttpRequest request, http_status_t statu
             
             // Parse query to get php arguments
             getArgsFromQuery(query, args);
+            for (auto arg = args.begin(); arg != args.end(); arg++) {
+                cout << *arg << endl;
+            }
 
             // Fork and execute php code
             pid = fork();
@@ -667,6 +665,9 @@ void HttpResponse::CreateResponseString(HttpRequest request, http_status_t statu
             } else {
                 // Parent process
                 wait(&error);
+            }
+            for (int i = 2; i < args.size(); i++) {
+                delete args[i];
             }
 
             //body += buffer.str();
