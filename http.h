@@ -55,31 +55,11 @@ public:
     }
 };
 
-class HttpMessage {
-protected:
+class HttpRequest {
+private:
     vector<const Header*> headers;
     http_method_t method;
     http_version_t version;
-public:
-    HttpMessage(http_method_t method, http_version_t version);
-    HttpMessage();
-    ~HttpMessage();
-    void Initialize(http_method_t method, http_version_t version);
-    void ParseHeaders(const char* buffer, int index);
-    virtual void Reset() = 0;
-    
-    // Getters
-    vector<const Header*> get_headers() { return headers; }
-    http_method_t get_method() { return method; }
-    http_version_t get_version() { return version; }
-
-    // Setters
-    void set_method(http_method_t method) { this->method = method; }
-    void set_version(http_version_t version) { this->version = version; }
-};
-
-class HttpRequest: public HttpMessage {
-private:
     string path;
     string query;
     string type;
@@ -89,17 +69,25 @@ public:
     HttpRequest();
     ~HttpRequest();
 
-    // Initialization method
+    // Initialization and reset method
     void Initialize(http_method_t method, http_version_t version, string path, string query, string type);
     void Reset();
 
+    // Header parsing 
+    void ParseHeaders(const char* buffer, int index);
+
     // Getters
+    vector<const Header*> get_headers() { return headers; }
+    http_method_t get_method() { return method; }
+    http_version_t get_version() { return version; }
     string get_path() { return path; }
     string get_query() { return query; }
     string get_content_type() { return type; }
     bool get_flag() { return toolong; }
 
     // Setters
+    void set_method(http_method_t method) { this->method = method; }
+    void set_version(http_version_t version) { this->version = version; }
     void set_path(string path) { this->path = path; }
     void set_query(string query) { this->query = query; }
     void set_flag(bool value) { toolong = value; }

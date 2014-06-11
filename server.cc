@@ -234,7 +234,7 @@ void HttpServer::RunMultiProcessed(bool verbose) {
                         // Handle request and send response
                         ParseRequest(request, server.get_buffer());
                         response = HandleRequest(request, verbose);
-
+                        server.SendResponse(response);
                     }
                     // Calculate elapsed time
                     time(&end);
@@ -254,10 +254,6 @@ void HttpServer::RunMultiProcessed(bool verbose) {
         // Sleep if not connected
         usleep(SLEEP_MSEC);
     }
-    for (auto response = responsecache.begin(); response != responsecache.end(); response++) {
-        cout << **response << endl;
-    }
-    cout << responsecache.size();
     if (verbose) {
         cout << "Server shutting down...\n";
     }
@@ -571,30 +567,27 @@ void HttpServer::ParseUri(string& uri, string& path, string& query, string& type
 }
 
 ////////////////////////////////////////////////
-//              HttpMessage                   //
+//              HttpRequest                   //
 ////////////////////////////////////////////////
-
-HttpMessage::HttpMessage(http_method_t method, http_version_t version) {
-    Initialize(method, version);
+HttpRequest::HttpRequest(http_method_t method, http_version_t version, string path, string query, string type) {
+    Initialize(method, version, path, query, type);
 }
 
-HttpMessage::HttpMessage() {
-    Initialize(INVALID_METHOD, INVALID_VERSION);
+HttpRequest::HttpRequest() {
+    Initialize(INVALID_METHOD, INVALID_VERSION, "", "", "");
 }
 
-HttpMessage::~HttpMessage() {
-    while (!headers.empty()) {
-        delete headers.back();
-        headers.pop_back();
-    }
-}
-
-void HttpMessage::Initialize(http_method_t method, http_version_t version) {
+void HttpRequest::Initialize(http_method_t method, http_version_t version, string path, string query, string type) {
+    // Call parent initialization
+    toolong = false;
     this->method = method;
     this->version = version;
+    this->path = path;
+    this->query = query;
+    this->type = type;
 }
 
-void HttpMessage::ParseHeaders(const char* buffer, int index) {
+void HttpRequest::ParseHeaders(const char* buffer, int index) {
     int i = index;
     int length = strlen(buffer);
     string name = "";
@@ -628,28 +621,6 @@ void HttpMessage::ParseHeaders(const char* buffer, int index) {
         name = "";
         value = "";
     }
-}
-
-////////////////////////////////////////////////
-//              HttpRequest                   //
-////////////////////////////////////////////////
-HttpRequest::HttpRequest(http_method_t method, http_version_t version, string path, string query, string type):
-             HttpMessage(method, version) {
-    Initialize(method, version, path, query, type);
-}
-
-HttpRequest::HttpRequest(): HttpMessage() {
-    Initialize(INVALID_METHOD, INVALID_VERSION, "", "", "");
-}
-
-void HttpRequest::Initialize(http_method_t method, http_version_t version, string path, string query, string type) {
-    // Call parent initialization
-    HttpMessage::Initialize(method, version);
-
-    toolong = false;
-    this->path = path;
-    this->query = query;
-    this->type = type;
 }
 
 void HttpRequest::Reset() {
