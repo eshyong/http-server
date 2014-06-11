@@ -42,14 +42,14 @@ const string statuses[] = {
     "100 Continue", "200 OK", "400 Bad Request", "404 Not Found", "413 Request Entity Too Large", "414 Request URI Too Large", "501 Not Implemented",
 };
 
-class Option {
+class Header {
 public:
-    // Header options, e.g. name="Content-Length", value="10"
+    // Request headers, e.g. name="Content-Length", value="10"
     string name;
     string value;
     
     // Constructor 
-    Option(string name, string value) {
+    Header(string name, string value) {
         this->name = name;
         this->value = value;
     }
@@ -57,7 +57,7 @@ public:
 
 class HttpMessage {
 protected:
-    vector<const Option*> options;
+    vector<const Header*> headers;
     http_method_t method;
     http_version_t version;
 public:
@@ -65,11 +65,11 @@ public:
     HttpMessage();
     ~HttpMessage();
     void Initialize(http_method_t method, http_version_t version);
-    void ParseOptions(const char* buffer, int index);
+    void ParseHeaders(const char* buffer, int index);
     virtual void Reset() = 0;
     
     // Getters
-    vector<const Option*> get_options() { return options; }
+    vector<const Header*> get_headers() { return headers; }
     http_method_t get_method() { return method; }
     http_version_t get_version() { return version; }
 
@@ -103,32 +103,6 @@ public:
     void set_path(string path) { this->path = path; }
     void set_query(string query) { this->query = query; }
     void set_flag(bool value) { toolong = value; }
-};
-
-class HttpResponse: public HttpMessage {
-private:
-    string stringrep;
-    int contentlen;
-    http_status_t status;
-public:
-    // Constructors and destructors
-    HttpResponse(HttpRequest request, fstream* file, http_status_t status);
-    HttpResponse();
-    ~HttpResponse();
-
-    // Initialization method
-    void CreateResponseString(HttpRequest request, http_status_t status);
-    void Reset();
-
-    // Getters
-    int get_content_length() { return contentlen; }
-    http_status_t get_status() { return status; }
-
-    // Setters
-    void set_status(http_status_t status) { this->status = status; }
-
-    // String representation
-    string to_string() { return stringrep; }
 };
 
 #endif

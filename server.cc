@@ -190,6 +190,7 @@ void HttpServer::Run(server_type type, bool verbose) {
     signal(SIGINT, handleSigint);
     signal(SIGCHLD, handleSigchld);
 
+    // Run with flag options
     if (type == MPROCESS) {
         RunMultiProcessed(verbose);
     } else if (type == MTHREADED) {
@@ -201,6 +202,7 @@ void HttpServer::Run(server_type type, bool verbose) {
 
 void HttpServer::RunMultiProcessed(bool verbose) {
     pid_t pid;
+    string response;
     time_t begin;
     time_t end;
     int status;
@@ -231,7 +233,8 @@ void HttpServer::RunMultiProcessed(bool verbose) {
                     if (server.Receive(verbose)) { 
                         // Handle request and send response
                         ParseRequest(request, server.get_buffer());
-                        HandleRequest(request, verbose);
+                        response = HandleRequest(request, verbose);
+
                     }
                     // Calculate elapsed time
                     time(&end);
@@ -251,6 +254,10 @@ void HttpServer::RunMultiProcessed(bool verbose) {
         // Sleep if not connected
         usleep(SLEEP_MSEC);
     }
+    for (auto response = responsecache.begin(); response != responsecache.end(); response++) {
+        cout << **response << endl;
+    }
+    cout << responsecache.size();
     if (verbose) {
         cout << "Server shutting down...\n";
     }
@@ -323,17 +330,17 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
 
     // Fill request struct
     request.Initialize(method, version, path, query, type);
-    request.ParseOptions(recvbuf, i);
+    request.ParseHeaders(recvbuf, i);
 }
 
-bool HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
-    HttpResponse response;
+string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
     bool toolong = request.get_flag();
     http_status_t status = OK;
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
     string path = request.get_path();
     string type = request.get_content_type();
+    string response;
     fstream file;
     
     // HTTP flow diagram starts here
@@ -367,12 +374,92 @@ bool HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
     }
 
     // Send response
-    response.CreateResponseString(request, status);
+    response = CreateResponse(request, status);
     if (verbose) {
-        cout << endl << "Response: " << response.to_string() << endl << endl;
+        cout << endl << "Response: " << response << endl << endl;
     }
-    server.SendResponse(response.to_string());
-    return true;
+    return response;
+}
+
+string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
+    // Create the string representation 
+    fstream file;
+    string body = "";
+    string path = request.get_path();
+    string type = request.get_content_type();
+    string query = request.get_query();
+    string command = "";
+    string response = "";
+    http_method_t method = request.get_method();
+    http_version_t version = request.get_version();
+    pid_t pid;
+    int begin = 0;
+    int index = 0;
+    int querylen = query.length();
+    int contentlen;
+    int error;
+    char c;
+
+    // Check method type
+    if (method == GET && status == OK) {
+        if (strcmp(type.c_str(), "application/php") == 0) {
+            // Run a PHP program while redirecting stdout to a stream
+            // Keep a reference to old cout and redirect stdout
+
+            // Create a php command
+            command = "php ";
+            command += path;
+            command += SPACE;
+            
+            // Parse query to get php arguments
+            while (index < querylen) {
+                // Start of valueN substr
+                if (query[index] == '=') {
+                    begin = index + 1;
+                }
+
+                // end of valueN substr
+                if (query[index] == '&') {
+                    command += query.substr(begin, index - begin);
+                    command += SPACE;
+                }
+                index++;
+            }
+            command += query.substr(begin, string::npos);
+
+            // Fork and execute php code
+            system(command.c_str());
+        } else {
+            // Get all characters in file
+            file.open(path, fstream::in);
+            while (file.good() && index <= BODY_LENGTH) {
+                body += (char) file.get();
+                index++;
+            }
+        }
+    }
+    contentlen = body.length() == 0 ? 0 : body.length() - 1;
+
+    // Append status line, options, and body to buffer
+    response += versions[version];
+    response += SPACE;
+    response += statuses[status];
+    response += CRLF;
+
+    // For GET only
+    if (status == OK && method == GET) {
+        response += "Accept-Ranges: bytes";
+        response += CRLF;
+        response += "Content-Type: ";
+        response += type;
+        response += CRLF;
+        response += "Content-Length: ";
+        response += std::to_string(contentlen);
+        response += CRLF;
+    }
+    response += CRLF;
+    response += body;
+    return response;
 }
 
 http_method_t HttpServer::GetMethod(const string method) {
@@ -496,9 +583,9 @@ HttpMessage::HttpMessage() {
 }
 
 HttpMessage::~HttpMessage() {
-    while (!options.empty()) {
-        delete options.back();
-        options.pop_back();
+    while (!headers.empty()) {
+        delete headers.back();
+        headers.pop_back();
     }
 }
 
@@ -507,15 +594,15 @@ void HttpMessage::Initialize(http_method_t method, http_version_t version) {
     this->version = version;
 }
 
-void HttpMessage::ParseOptions(const char* buffer, int index) {
+void HttpMessage::ParseHeaders(const char* buffer, int index) {
     int i = index;
     int length = strlen(buffer);
     string name = "";
     string value = "";
-    const Option* option;
+    const Header* header;
 
     while (i <= length) {
-        // Get name of header option
+        // Get name of header
         while (i <= length && buffer[i] != ':') {
             name += buffer[i];
             i++;
@@ -523,7 +610,7 @@ void HttpMessage::ParseOptions(const char* buffer, int index) {
         // Increment twice for : 
         i += 2;
 
-        // Get value of header option
+        // Get value of header
         while (i <= length && buffer[i] != '\r') {
             value += buffer[i];
             i++;
@@ -531,10 +618,10 @@ void HttpMessage::ParseOptions(const char* buffer, int index) {
         // Increment twice for \r\n
         i += 2;
         
-        // Add new option
+        // Add new header struct
         if (!isspace(name.c_str()[0])) {
-            option = new Option(name, value);
-            options.push_back(option);
+            header = new Header(name, value);
+            headers.push_back(header);
         }
         
         // Reset fields
@@ -570,137 +657,12 @@ void HttpRequest::Reset() {
     type = "";
     method = INVALID_METHOD;
     version = INVALID_VERSION;
-    while (!options.empty()) {
-        delete options.back();
-        options.pop_back();
+    while (!headers.empty()) {
+        delete headers.back();
+        headers.pop_back();
     }
 }
 
 HttpRequest::~HttpRequest() {}
-
-////////////////////////////////////////////////
-//              HttpResponse                  //
-////////////////////////////////////////////////
-HttpResponse::HttpResponse(HttpRequest request, fstream* file, http_status_t status):
-              HttpMessage(request.get_method(), request.get_version()) {
-}
-
-HttpResponse::HttpResponse():
-              HttpMessage(INVALID_METHOD, INVALID_VERSION) {
-    status = OK;
-    stringrep = "";
-}
-
-void HttpResponse::CreateResponseString(HttpRequest request, http_status_t status) {
-    // Create the string representation 
-    fstream file;
-    streambuf* oldcout;
-    stringstream buffer;
-    vector<const char*> args;
-    string body = "";
-    string path = request.get_path();
-    string type = request.get_content_type();
-    string query = request.get_query();
-    string command = "";
-    http_method_t method = request.get_method();
-    http_version_t version = request.get_version();
-    pid_t pid;
-    int begin = 0;
-    int index = 0;
-    int querylen = query.length();
-    int contentlen;
-    int error;
-    char c;
-
-    // Call parent initialization
-    HttpMessage::Initialize(method, version);
-
-    // Create a buffer and fill with information from response
-    stringrep = "";
-
-    // Check method type
-    if (method == GET && status == OK) {
-        if (strcmp(type.c_str(), "application/php") == 0) {
-            // Run a PHP program while redirecting stdout to a stream
-            // Keep a reference to old cout and redirect stdout
-            //oldcout = cout.rdbuf();
-            //cout.rdbuf(buffer.rdbuf());
-
-            // Create a php command
-            command = "php ";
-            command += path;
-            command += SPACE;
-            
-            // Parse query to get php arguments
-            while (index < querylen) {
-                // Start of valueN substr
-                if (query[index] == '=') {
-                    begin = index + 1;
-                }
-
-                // end of valueN substr
-                if (query[index] == '&') {
-                    command += query.substr(begin, index - begin);
-                    command += SPACE;
-                }
-                index++;
-            }
-            command += query.substr(begin, string::npos);
-
-            // Fork and execute php code
-            system(command.c_str());
-
-            //body += buffer.str();
-            //cout.rdbuf(oldcout);
-        } else {
-            // Get all characters in file
-            file.open(path, fstream::in);
-            while (file.good() && index <= BODY_LENGTH) {
-                body += (char) file.get();
-                index++;
-            }
-        }
-    }
-    contentlen = body.length() == 0 ? 0 : body.length() - 1;
-
-    // Append status line, options, and body to buffer
-    stringrep += versions[version];
-    stringrep += SPACE;
-    stringrep += statuses[status];
-    stringrep += CRLF;
-
-    // For GET only
-    if (status == OK && method == GET) {
-        stringrep += "Accept-Ranges: bytes";
-        stringrep += CRLF;
-        stringrep += "Content-Type: ";
-        stringrep += type;
-        stringrep += CRLF;
-        stringrep += "Content-Length: ";
-        stringrep += std::to_string(contentlen);
-        stringrep += CRLF;
-    }
-
-    stringrep += CRLF;
-    stringrep += body;
-}
-
-void HttpResponse::Reset() {
-    stringrep = "";
-    method = INVALID_METHOD;
-    version = INVALID_VERSION;
-    while (!options.empty()) {
-        delete options.back();
-        options.pop_back();
-    }
-}
-
-HttpResponse::~HttpResponse() {
-    while (!options.empty()) {
-        // Clean up options
-        delete options.back();
-        options.pop_back();
-    }
-}
 
 // End of file

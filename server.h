@@ -45,12 +45,14 @@ class HttpServer {
 private: 
     SocketServer server;
     double elapsedtime;
+    vector<HttpRequest*> requestcache;
+    vector<string*> responsecache;
 public:
     // Constructor/Destructor
     HttpServer();
     ~HttpServer();
 
-    // Event loop 
+    // Event loop methods
     void Run(server_type type, bool verbose);
     void RunMultiProcessed(bool verbose);
     void RunMultiThreaded(bool verbose);
@@ -58,10 +60,10 @@ public:
 
     // Request handling methods
     void ParseRequest(HttpRequest& request, const char* recvbuf);
-    bool HandleRequest(HttpRequest& request, bool verbose);
+    string HandleRequest(HttpRequest& request, bool verbose);
 
     // Response creating method
-    string CreateResponse(HttpResponse& response, fstream& file);
+    string CreateResponse(HttpRequest request, http_status_t status);
     
     // Helper methods
     http_method_t GetMethod(const string method);
