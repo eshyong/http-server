@@ -399,9 +399,10 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
     // Check method type
     if (method == GET && status == OK) {
         if (strcmp(type.c_str(), "application/php") == 0) {
-            // Run a PHP program while redirecting stdout to a stream
-            // Keep a reference to old cout and redirect stdout
-
+            // WARNING: executes bash code with user input
+            // Extremely unsafe and will be deprecated
+            // I am considering embedding PHP or adding a CGI protocol
+            /*
             // Create a php command
             command = "php ";
             command += path;
@@ -424,7 +425,9 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
             command += query.substr(begin, string::npos);
 
             // Fork and execute php code
-            system(command.c_str());
+            system(command.c_str()); */
+            status = NOT_IMPLEMENTED;
+            type = "text/html";
         } else {
             // Get all characters in file
             file.open(path, fstream::in);
