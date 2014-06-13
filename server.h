@@ -10,8 +10,16 @@
 #include <fstream>
 #include "http.h"
 
+using std::pair;
+
 enum server_type {
     MPROCESS = 0, MTHREADED, EVENTED,
+};
+
+struct mthreaded_request_args {
+    pair<int, string> client;
+    void* ptr;
+    bool verbose;
 };
 
 class SocketServer {
@@ -24,7 +32,6 @@ private:
     
     // Socket file descriptors
     int listening;
-    int connection;
     char recvbuf[BUFFER_LENGTH + 1];
 public:
     // Constructor/Destructor
@@ -35,31 +42,41 @@ public:
     const char* get_buffer() { return recvbuf; }
 
     // Socket call wrapper methods
-    bool Connect();
-    bool Receive(bool verbose);
-    bool SendResponse(string buffer);
-    bool Close();
+    pair<int, string> Connect();
+    bool Receive(bool verbose, pair<int, string> client);
+    bool SendResponse(string buffer, int connection);
+    bool Close(int connection);
 };
 
 class HttpServer {
 private: 
     SocketServer server;
+    vector<pair<HttpRequest*, string> > cache;
     double elapsedtime;
-    vector<HttpRequest*> requestcache;
-    vector<string*> responsecache;
+    pthread_attr_t attr;
+    pthread_mutex_t cachemutex;
+    bool verbose;
 public:
     // Constructor/Destructor
     HttpServer();
     ~HttpServer();
 
-    // Event loop methods
+    // Multi-process request handling
     void Run(server_type type, bool verbose);
     void RunMultiProcessed(bool verbose);
+    void DispatchRequestToChild(bool verbose, pair<int, string> client);
+
+    // Multi-threaded request handling
     void RunMultiThreaded(bool verbose);
+    void* DispatchRequestToThread(bool verbose, pair<int, string> client);
+    static void* CallDispatchRequestToThread(void* args); 
+    
+    // Evented request handling
     void RunEvented(bool verbose);
 
     // Request handling methods
     void ParseRequest(HttpRequest& request, const char* recvbuf);
+    string HandleRequestThreaded(HttpRequest& request, bool verbose, bool& cached);
     string HandleRequest(HttpRequest& request, bool verbose);
 
     // Response creating method

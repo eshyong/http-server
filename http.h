@@ -11,12 +11,13 @@
 #define PREVDIR   "/.."
 #define PLAINTEXT "text/html"
 
+#define BACKLOG        128
 #define BODY_LENGTH    8191
 #define BUFFER_LENGTH  8191
 #define URI_MAX_LENGTH 4095
 #define PORT           8000
-#define SLEEP_MSEC     5000
-#define TIME_OUT       2.5
+#define SLEEP_MSEC     1000
+#define TIME_OUT       1.0
 
 using std::fstream;
 using std::string;
@@ -68,6 +69,11 @@ public:
     HttpRequest(http_method_t method, http_version_t version, string path, string query, string type);
     HttpRequest();
     ~HttpRequest();
+
+    // Equality operator
+    bool Equals(HttpRequest& other) {
+        return (method == other.get_method() && version == other.get_version() && path.compare(other.get_path()) == 0);
+    }
 
     // Initialization and reset method
     void Initialize(http_method_t method, http_version_t version, string path, string query, string type);

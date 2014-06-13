@@ -14,6 +14,8 @@ using std::cerr;
 using std::cout;
 using std::endl;
 using std::fstream;
+using std::make_pair;
+using std::pair;
 using std::streambuf;
 using std::string;
 using std::stringstream;
@@ -111,8 +113,8 @@ SocketServer::SocketServer() {
         exit(EXIT_FAILURE);
     }
 
-    // Listen for connections (1 for now)
-    error = listen(listening, 1);
+    // Listen for connections
+    error = listen(listening, BACKLOG);
     if (error < 0) {
         perror("listen");
         close(listening);
@@ -121,58 +123,65 @@ SocketServer::SocketServer() {
 }
 
 SocketServer::~SocketServer() {
-    // Close listening socket and any connections
+    // Close listening socket 
     close(listening);
-    close(connection);
 }
 
-bool SocketServer::Connect() {
+std::pair<int, string> SocketServer::Connect() {
     // Accept any incoming connections
     socklen_t length = sizeof(clientaddr);
     int error = 0;
-    connection = accept(listening, NULL, NULL);
-    if (connection < 0) {
-        // Expected behavior since we are using non-blocking sockets
-        return false;
+    int connection = accept(listening, NULL, NULL);
+    string peer = "";
+
+    if (connection > 0) {
+        // Get connecting client's network info
+        error = getpeername(connection, (struct sockaddr *)&clientaddr, &length);
+        if (error < 0) {
+            perror("getpeername");
+            memset(peername, (char) NULL, sizeof(peername));
+        } else {
+            inet_ntop(AF_INET, &(clientaddr.sin_addr), peername, length);
+            peer = string(peername);
+        }
     }
-    // Get connecting client's network info
-    error = getpeername(connection, (struct sockaddr *)&clientaddr, &length);
-    if (error < 0) {
-        perror("getpeername");
-        memset(peername, (char) NULL, sizeof(peername));
-    } else {
-        inet_ntop(AF_INET, &(clientaddr.sin_addr), peername, length);
-    }
-    return true;
+    return make_pair(connection, peer);
 }
 
-bool SocketServer::Receive(bool verbose) {
+bool SocketServer::Receive(bool verbose, pair<int, string> client) {
+    int connection = client.first;
+    string peer = client.second;
+
+    // Receive bytes from client connection
     int count = recv(connection, recvbuf, BUFFER_LENGTH, 0);
     if (count <= 0) {
         return false;
     }
+    
+    // Logging and NULL termination
     if (verbose) {
-        cout << "Received " << count << " bytes from " << peername << ":\n";
+        cout << "Received " << count << " bytes from " << peer << ":\n";
         cout << recvbuf << endl;
     }
     recvbuf[count] = (char) NULL;
     return true;
 }
 
-bool SocketServer::Close() {
-    int error = close(connection);
-    if (error < 0) {
-        perror("close");
+bool SocketServer::SendResponse(string buffer, int connection) {
+    // Send buffer over socket, no need for NULL termination
+    int count = send(connection, buffer.c_str(), buffer.length() - 1, 0);
+    if (count < 0) {
+        perror("send");
         return false;
     }
     return true;
 }
 
-bool SocketServer::SendResponse(string buffer) {
-    // Send buffer over socket, no need for NULL termination
-    int count = send(connection, buffer.c_str(), buffer.length() - 1, 0);
-    if (count < 0) {
-        perror("send");
+bool SocketServer::Close(int connection) {
+    // Close connection specified by file descriptor
+    int error = close(connection);
+    if (error < 0) {
+        perror("close");
         return false;
     }
     return true;
@@ -183,7 +192,14 @@ bool SocketServer::SendResponse(string buffer) {
 ////////////////////////////////////////////////
 HttpServer::HttpServer() { elapsedtime = 0.0; }
 
-HttpServer::~HttpServer() {}
+HttpServer::~HttpServer() {
+    // Clean up allocated memory from cache
+    while (!cache.empty()) {
+        HttpRequest* request = cache.back().first;
+        delete request;
+        cache.pop_back();
+    }
+}
 
 void HttpServer::Run(server_type type, bool verbose) {
     // Add signal handlers
@@ -202,20 +218,19 @@ void HttpServer::Run(server_type type, bool verbose) {
 
 void HttpServer::RunMultiProcessed(bool verbose) {
     pid_t pid;
-    string response;
-    time_t begin;
-    time_t end;
-    int status;
+    pair<int, string> client;
+    int connection;
     if (verbose) {
         cout << "Server starting...\n\n";
     }
 
     // Event loop
     while (running) {
-        HttpRequest request;
 
         // Wait for a connection
-        if (server.Connect()) {
+        client = server.Connect();
+        connection = client.first;
+        if (connection > 0) {
             // Fork a new server process to handle client connection
             pid = fork();
             if (pid < 0) {
@@ -224,32 +239,11 @@ void HttpServer::RunMultiProcessed(bool verbose) {
                 continue;
             } else if (pid == 0) {
                 // Child process
-                // Begin timer
-                time(&begin);
-                time(&end);
-                elapsedtime = difftime(end, begin);
-                
-                do {
-                    if (server.Receive(verbose)) { 
-                        // Handle request and send response
-                        ParseRequest(request, server.get_buffer());
-                        response = HandleRequest(request, verbose);
-                        server.SendResponse(response);
-                    }
-                    // Calculate elapsed time
-                    time(&end);
-                    elapsedtime = difftime(end, begin);
-                } while (elapsedtime < TIME_OUT);
-
-                // Close connection and exit
-                server.Close();
-                exit(EXIT_SUCCESS);
+                DispatchRequestToChild(verbose, client);
             } else {
                 // Parent process
-                server.Close();
+                server.Close(connection);
             }
-            // Reset request
-            request.Reset();
         }
         // Sleep if not connected
         usleep(SLEEP_MSEC);
@@ -259,9 +253,139 @@ void HttpServer::RunMultiProcessed(bool verbose) {
     }
 }
 
-void HttpServer::RunMultiThreaded(bool verbose) {
-    cout << "Not implemented yet\n";
+void HttpServer::DispatchRequestToChild(bool verbose, pair<int, string> client) {
+    HttpRequest request;
+    string response;
+    time_t begin;
+    time_t end;
+    int connection = client.first;
+
+    // End process when elapsed time exceeds time out interval
+    time(&begin);
+    time(&end);
+    elapsedtime = difftime(end, begin);
+
+    do {
+        if (server.Receive(verbose, client)) { 
+            // Handle request and send response
+            ParseRequest(request, server.get_buffer());
+            response = HandleRequest(request, verbose);
+            server.SendResponse(response, connection);
+        }
+        // Calculate elapsed time
+        time(&end);
+        elapsedtime = difftime(end, begin);
+    } while (elapsedtime < TIME_OUT);
+
+    // Close connection and exit
+    server.Close(connection);
     exit(EXIT_SUCCESS);
+}
+
+void HttpServer::RunMultiThreaded(bool verbose) {
+    vector<pthread_t> threadlist;
+    pthread_t newthread;
+    mthreaded_request_args args;
+    pair<int, string> client;
+    int connection;
+    int error;
+    void* status;
+
+    // Initialize thread attributes and mutex
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    pthread_mutex_init(&cachemutex, NULL);
+    if (verbose) {
+        cout << "Server starting...\n\n";
+    }
+
+    // Event loop waits for any new connections
+    while (running) {
+        client = server.Connect();
+        connection = client.first;
+        if (connection > 0) {
+            // Create a new thread and dispatch thread
+            args.verbose = verbose;
+            args.client = client;
+            args.ptr = this;
+
+            // Add new thread to threadlist
+            error = pthread_create(&newthread, &attr, HttpServer::CallDispatchRequestToThread, &args);
+            if (error < 0) {
+                perror("pthread_create");
+            }
+            threadlist.push_back(newthread);
+        }
+        // Sleep if no connections
+        usleep(SLEEP_MSEC);
+    }
+
+    if (verbose) {
+        cout << "Server shutting down...\n";
+    }
+
+    // Join all finished threads
+    while (!threadlist.empty()) {
+        error = pthread_join(threadlist.back(), NULL);
+        if (error < 0) {
+            perror("pthread_join");
+        }
+        threadlist.pop_back();
+    }
+
+    // Clean up mutex and attributes
+    pthread_attr_destroy(&attr);
+    pthread_mutex_destroy(&cachemutex);
+
+    // Allow main thread to exit while waiting for any threads to finish
+    pthread_exit(NULL);
+}
+
+void* HttpServer::DispatchRequestToThread(bool verbose, pair<int, string> client) {
+    HttpRequest *request = new HttpRequest;
+    string response;
+    time_t begin;
+    time_t end;
+    int connection = client.first;
+    bool cached = false;
+
+    // End process when elapsed time exceeds time out interval
+    time(&begin);
+    time(&end);
+    elapsedtime = difftime(end, begin);
+
+    do {
+        if (server.Receive(verbose, client)) { 
+            // Handle request and send response
+            ParseRequest(*request, server.get_buffer());
+            response = HandleRequestThreaded(*request, verbose, cached);
+            server.SendResponse(response, connection);
+        }
+        // Calculate elapsed time
+        time(&end);
+        elapsedtime = difftime(end, begin);
+    } while (elapsedtime < TIME_OUT);
+
+    // Add item to cache
+    if (!cached) {
+        // Get lock and add new item to cache
+        pthread_mutex_lock(&cachemutex);
+        cache.push_back(make_pair(request, response));
+        pthread_mutex_unlock(&cachemutex);
+    }
+
+    // Close connection and exit
+    server.Close(connection);
+    pthread_exit(NULL);
+}
+
+void* HttpServer::CallDispatchRequestToThread(void* args) {
+    // Unpack arguments and return a function pointer
+    mthreaded_request_args* arguments = (mthreaded_request_args*) args;
+    bool verbose = arguments->verbose;
+    pair<int, string> client = arguments->client;
+    void* ptr = arguments->ptr;
+    return ((HttpServer*) ptr)->DispatchRequestToThread(verbose, client); 
 }
 
 void HttpServer::RunEvented(bool verbose) {
@@ -326,7 +450,25 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
 
     // Fill request struct
     request.Initialize(method, version, path, query, type);
-    request.ParseHeaders(recvbuf, i);
+}
+
+string HttpServer::HandleRequestThreaded(HttpRequest& request, bool verbose, bool& cached) {
+    // Lock cache to prevent other threads from accessing
+    cout << "Searching cache...\n";
+    for (auto item = cache.begin(); item != cache.end(); item++) {
+        // Check cache for saved response
+        HttpRequest* cachedreq = (*item).first;
+        string response = (*item).second;
+        if (request.Equals(*cachedreq)) {
+            cout << "Serving from cache\n\n";
+            cached = true;
+            return response;
+        }
+    }
+    cout << "Not found in cache.\n";
+
+    // Otherwise create a new response
+    return HandleRequest(request, verbose);
 }
 
 string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
