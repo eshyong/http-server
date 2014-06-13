@@ -348,7 +348,7 @@ void* HttpServer::DispatchRequestToThread(bool verbose, pair<int, string> client
     time_t end;
     int connection = client.first;
     bool cached = false;
-
+        
     // End process when elapsed time exceeds time out interval
     time(&begin);
     time(&end);
@@ -358,7 +358,11 @@ void* HttpServer::DispatchRequestToThread(bool verbose, pair<int, string> client
         if (server.Receive(verbose, client)) { 
             // Handle request and send response
             ParseRequest(*request, server.get_buffer());
+
+            // Lock mutex before call
+            pthread_mutex_lock(&cachemutex);
             response = HandleRequestThreaded(*request, verbose, cached);
+            pthread_mutex_unlock(&cachemutex);
             server.SendResponse(response, connection);
         }
         // Calculate elapsed time
@@ -368,7 +372,7 @@ void* HttpServer::DispatchRequestToThread(bool verbose, pair<int, string> client
 
     // Add item to cache
     if (!cached) {
-        // Get lock and add new item to cache
+        // Lock cache while updating
         pthread_mutex_lock(&cachemutex);
         cache.push_back(make_pair(request, response));
         pthread_mutex_unlock(&cachemutex);
@@ -453,7 +457,6 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
 }
 
 string HttpServer::HandleRequestThreaded(HttpRequest& request, bool verbose, bool& cached) {
-    // Lock cache to prevent other threads from accessing
     cout << "Searching cache...\n";
     for (auto item = cache.begin(); item != cache.end(); item++) {
         // Check cache for saved response
