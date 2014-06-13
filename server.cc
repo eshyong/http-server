@@ -268,7 +268,7 @@ void HttpServer::DispatchRequestToChild(bool verbose, pair<int, string> client) 
     do {
         if (server.Receive(verbose, client)) { 
             // Handle request and send response
-            ParseRequest(request, server.get_buffer());
+            ParseRequest(request, verbose, server.get_buffer());
             response = HandleRequest(request, verbose);
             server.SendResponse(response, connection);
         }
@@ -357,12 +357,10 @@ void* HttpServer::DispatchRequestToThread(bool verbose, pair<int, string> client
     do {
         if (server.Receive(verbose, client)) { 
             // Handle request and send response
-            ParseRequest(*request, server.get_buffer());
+            ParseRequest(*request, verbose, server.get_buffer());
 
             // Lock mutex before call
-            pthread_mutex_lock(&cachemutex);
             response = HandleRequestThreaded(*request, verbose, cached);
-            pthread_mutex_unlock(&cachemutex);
             server.SendResponse(response, connection);
         }
         // Calculate elapsed time
@@ -397,7 +395,7 @@ void HttpServer::RunEvented(bool verbose) {
     exit(EXIT_SUCCESS);
 }
 
-void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
+void HttpServer::ParseRequest(HttpRequest& request, bool verbose, const char* recvbuf) {
     int i = 0;
     http_method_t method;
     http_version_t version;
@@ -416,7 +414,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
 
     // Parse method
     method = GetMethod(buffer);
-    if (method == INVALID_METHOD) {
+    if (verbose && method == INVALID_METHOD) {
         cout << "Unrecognized HTTP method\n";
     }
 
@@ -430,7 +428,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
     // Parse URI, sanitizing output
     ParseUri(uri, path, query, type);
     i++;
-    if (path.length() > URI_MAX_LENGTH) {
+    if (verbose && path.length() > URI_MAX_LENGTH) {
         cout << "Request URI too long.\n";
     }
 
@@ -448,7 +446,7 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
 
     // Parse version number
     version = GetVersion(buffer);
-    if (version == INVALID_VERSION) {
+    if (verbose && version == INVALID_VERSION) {
         cout << "Invalid HTTP version.\n";
     }
 
@@ -457,21 +455,39 @@ void HttpServer::ParseRequest(HttpRequest& request, const char* recvbuf) {
 }
 
 string HttpServer::HandleRequestThreaded(HttpRequest& request, bool verbose, bool& cached) {
-    cout << "Searching cache...\n";
+    HttpRequest* cachedreq;
+    string response = "";
+
+    // Lock cache and try to read
+    if (verbose) {
+        cout << "Searching cache...\n";
+    }
     for (auto item = cache.begin(); item != cache.end(); item++) {
         // Check cache for saved response
-        HttpRequest* cachedreq = (*item).first;
-        string response = (*item).second;
+        cachedreq = (*item).first;
+        response = (*item).second;
         if (request.Equals(*cachedreq)) {
-            cout << "Serving from cache\n\n";
+            if (verbose) {
+                cout << "Serving from cache\n\n";
+            }
             cached = true;
-            return response;
         }
     }
-    cout << "Not found in cache.\n";
+    // Release lock
+    pthread_mutex_unlock(&cachemutex);
 
-    // Otherwise create a new response
-    return HandleRequest(request, verbose);
+    if (!cached) {
+        // Not found, create a new response
+        if (verbose) {
+            cout << "Not found in cache.\n";
+        }
+        response = HandleRequest(request, verbose);
+    }
+    if (verbose) {
+        cout << endl << "Response: " << response << endl << endl;
+    }
+
+    return response;
 }
 
 string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {

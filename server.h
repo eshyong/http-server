@@ -75,7 +75,7 @@ public:
     void RunEvented(bool verbose);
 
     // Request handling methods
-    void ParseRequest(HttpRequest& request, const char* recvbuf);
+    void ParseRequest(HttpRequest& request, bool verbose, const char* recvbuf);
     string HandleRequestThreaded(HttpRequest& request, bool verbose, bool& cached);
     string HandleRequest(HttpRequest& request, bool verbose);
 
