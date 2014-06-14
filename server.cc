@@ -541,6 +541,8 @@ string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
 string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
     // Create the string representation 
     fstream file;
+    time_t now;
+    struct tm* gmnow;
     string body = "";
     string path = request.get_path();
     string type = request.get_content_type();
@@ -555,7 +557,11 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
     int querylen = query.length();
     int contentlen;
     int error;
-    char c;
+    int c = 0;
+    
+    // Get GMT time
+    time(&now);
+    gmnow = gmtime(&now);
 
     // Check method type
     if (method == GET && status == OK) {
@@ -592,13 +598,15 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
         } else {
             // Get all characters in file
             file.open(path, fstream::in);
-            while (file.good() && index <= BODY_LENGTH) {
-                body += (char) file.get();
+            c = file.get();
+            while (c != EOF && index <= BODY_LENGTH) {
+                body += (char) c;
                 index++;
+                c = file.get();
             }
         }
     }
-    contentlen = body.length() == 0 ? 0 : body.length() - 1;
+    contentlen = body.length() == 0 ? 0 : body.length();
 
     // Append status line, options, and body to buffer
     response += versions[version];
@@ -608,15 +616,20 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
 
     // For GET only
     if (status == OK && method == GET) {
-        response += "Accept-Ranges: bytes";
+        response += ACCEPT_RANGES;
+        response += BYTES;
         response += CRLF;
-        response += "Content-Type: ";
+        response += CONTENT_TYPE;
         response += type;
         response += CRLF;
-        response += "Content-Length: ";
+        response += CONTENT_LENGTH;
         response += std::to_string(contentlen);
         response += CRLF;
     }
+    // Add time and body
+    response += DATE;
+    response += asctime(gmnow);
+    response += CRLF;
     response += CRLF;
     response += body;
     return response;

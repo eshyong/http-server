@@ -10,6 +10,12 @@
 #include <fstream>
 #include "http.h"
 
+#define ACCEPT_RANGES  "Accept-Ranges: "
+#define BYTES          "bytes"
+#define CONTENT_TYPE   "Content-Type: "
+#define CONTENT_LENGTH "Content-Length: "
+#define DATE           "Date: "
+
 using std::pair;
 
 enum server_type {
