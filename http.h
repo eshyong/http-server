@@ -12,14 +12,14 @@
 #define CSS       "text/css"
 #define HTML      "text/html"
 #define PLAINTEXT "text/plain"
-#define APP_JS    "application/js"
+#define APP_JS    "application/javascript"
 #define APP_PHP   "application/php"
 #define PNG       "image/png"
 #define JPG       "image/jpeg"
 #define GIF       "image/gif"
 
 #define BACKLOG        128
-#define BODY_LENGTH    8191
+#define BODY_LENGTH    16777216
 #define BUFFER_LENGTH  8191
 #define URI_MAX_LENGTH 4095
 #define PORT           8000
