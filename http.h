@@ -9,7 +9,14 @@
 #define SPACE     " "
 #define DIRECTORY "test"
 #define PREVDIR   "/.."
-#define PLAINTEXT "text/html"
+#define CSS       "text/css"
+#define HTML      "text/html"
+#define PLAINTEXT "text/plain"
+#define APP_JS    "application/js"
+#define APP_PHP   "application/php"
+#define PNG       "image/png"
+#define JPG       "image/jpeg"
+#define GIF       "image/gif"
 
 #define BACKLOG        128
 #define BODY_LENGTH    8191
@@ -97,6 +104,7 @@ public:
     void set_method(http_method_t method) { this->method = method; }
     void set_version(http_version_t version) { this->version = version; }
     void set_copy(string copy) { this->copy = copy; }
+    void set_content_type(string type) { this->type = type; }
     void set_path(string path) { this->path = path; }
     void set_query(string query) { this->query = query; }
     void set_flag(bool value) { toolong = value; }

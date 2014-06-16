@@ -15,6 +15,7 @@
 #define CONTENT_TYPE   "Content-Type: "
 #define CONTENT_LENGTH "Content-Length: "
 #define DATE           "Date: "
+#define TMPFILE        "tmpfile.out"
 
 using std::pair;
 
@@ -84,7 +85,9 @@ public:
     string HandleRequest(HttpRequest& request, bool verbose);
 
     // Response creating method
-    string CreateResponse(HttpRequest request, http_status_t status);
+    string HandleGet(HttpRequest request, http_status_t status);
+    string ExecutePhp(fstream& file, string request);
+    string CreateResponseString(HttpRequest request, string response, string body, http_status_t status);
     
     // Helper methods
     http_method_t GetMethod(const string method);

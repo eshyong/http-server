@@ -8,6 +8,7 @@
 #include <sstream>
 #include <fcntl.h>
 #include "http.h"
+#include "ph7.h"
 #include "server.h"
 
 using std::cerr;
@@ -42,6 +43,8 @@ void handleSigchld(int signum) {
 ////////////////////////////////////////////////
 //              Misc Helpers                  //
 ////////////////////////////////////////////////
+
+// Hex to ASCII helper, used for parsing URIs
 char hexToAscii(string hex) {
     int ascii = 0;
     int num;
@@ -487,7 +490,7 @@ string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
     http_version_t version = request.get_version();
     string path = request.get_path();
     string type = request.get_content_type();
-    string response;
+    string response = "";
     fstream file;
     
     // HTTP flow diagram starts here
@@ -507,12 +510,7 @@ string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
         // Handle each HTTP method
         if (method == GET) {
             // Get URI resource by opening file
-            file.open(path, fstream::in);
-            if (!file.is_open()) {
-                // Not found
-                perror("open");
-                status = NOT_FOUND;
-            }
+            response = HandleGet(request, status);
         } else {
             // Unimplemented methods
             cout << "Not implemented yet\n";
@@ -521,42 +519,47 @@ string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
     }
 
     // Send response
-    response = CreateResponse(request, status);
     if (verbose) {
         cout << endl << "Response: " << response << endl << endl;
     }
     return response;
 }
 
-string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
-    // Create the string representation 
+string HttpServer::HandleGet(HttpRequest request, http_status_t status) {
+    // File streams for reading
     fstream file;
-    time_t now;
-    struct tm* gmnow;
+    fstream temp;
+
+    // String variables for file streams and the HTTP response
     string body = "";
     string path = request.get_path();
     string type = request.get_content_type();
-    string query = request.get_query();
-    string command = "";
+    string copy = request.get_copy();
     string response = "";
+    
+    // HTTP request info
     http_method_t method = request.get_method();
-    http_version_t version = request.get_version();
+
+    // Misc values
     int index = 0;
-    int contentlen;
     int c = 0;
     
-    // Get GMT time
-    time(&now);
-    gmnow = gmtime(&now);
+    // Open file and try to fulfill request
+    file.open(path, fstream::in);
+    if (!file.good()) {
+        perror("fstream::open");
+        status = NOT_FOUND;
+    }
 
-    // Check method type
     if (method == GET && status == OK) {
-        if (strcmp(type.c_str(), "application/php") == 0) {
-            status = NOT_IMPLEMENTED;
-            type = "text/html";
+        if (strcmp(type.c_str(), APP_PHP) == 0) {
+            // Execute PHP file 
+            body = ExecutePhp(file, copy);
+
+            // Return output type as plaintext
+            request.set_content_type(HTML);
         } else {
             // Get all characters in file
-            file.open(path, fstream::in);
             c = file.get();
             while (c != EOF && index <= BODY_LENGTH) {
                 body += (char) c;
@@ -565,33 +568,118 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
             }
         }
     }
-    contentlen = body.length() == 0 ? 0 : body.length();
+    file.close();
+    response = CreateResponseString(request, response, body, status);
+    return response;
+}
 
-    // Append status line, options, and body to buffer
-    response += versions[version];
-    response += SPACE;
-    response += statuses[status];
-    response += CRLF;
+string HttpServer::CreateResponseString(HttpRequest request, string response, string body, http_status_t status) {
+    // Time structs for GMT time
+    time_t now;
+    struct tm* gmnow;
+
+    // Request fields
+    int contentlen = body.length() == 0 ? 0 : body.length() - 1;
+    http_method_t method = request.get_method();
+    http_version_t version = request.get_version();
+    string type = request.get_content_type();
+
+    // Create a new response
+    string newresponse = response;
+
+    // Get GMT time
+    time(&now);
+    gmnow = gmtime(&now);
+
+    // Append status line and body to buffer
+    newresponse += versions[version];
+    newresponse += SPACE;
+    newresponse += statuses[status];
+    newresponse += CRLF;
 
     // For GET only
     if (status == OK && method == GET) {
-        response += ACCEPT_RANGES;
-        response += BYTES;
-        response += CRLF;
-        response += CONTENT_TYPE;
-        response += type;
-        response += CRLF;
-        response += CONTENT_LENGTH;
-        response += std::to_string(contentlen);
-        response += CRLF;
+        newresponse += ACCEPT_RANGES;
+        newresponse += BYTES;
+        newresponse += CRLF;
+        newresponse += CONTENT_TYPE;
+        newresponse += type;
+        newresponse += CRLF;
+        newresponse += CONTENT_LENGTH;
+        newresponse += std::to_string(contentlen);
+        newresponse += CRLF;
     }
     // Add time and body
-    response += DATE;
-    response += asctime(gmnow);
-    response += CRLF;
-    response += CRLF;
-    response += body;
-    return response;
+    newresponse += DATE;
+    newresponse += asctime(gmnow);
+    newresponse += CRLF;
+    newresponse += body;
+    return newresponse;
+}
+
+string HttpServer::ExecutePhp(fstream& file, string request) {
+    // PHP engine
+    ph7* engine;
+    ph7_vm* vm = NULL;
+    const void* uncast;
+    const char* output = NULL;
+    const char* errlog;
+    int outputlen;
+    int error;
+    int loglen;
+    int c;
+    string src = "";
+    string body = "";
+
+    // Get PHP source code to execute
+    c = file.get();
+    while (c != EOF) {
+        src += (char) c;
+        c = file.get();
+    }
+
+    // Start PHP engine and VM
+    error = ph7_init(&engine);
+    if (error != PH7_OK) {
+        cout << "Error allocating a new PH7 engine instance\n\n";
+        goto cleanup;
+    }
+    
+    // Compile source code
+    error = ph7_compile_v2(engine, src.c_str(), -1, &vm, 0);
+    if (error != PH7_OK) {
+        if (error == PH7_COMPILE_ERR) {
+            ph7_config(engine, PH7_CONFIG_ERR_LOG, &errlog, &loglen);
+            if (loglen > 0) {
+                cout << errlog << endl << endl;
+            }
+        }
+        goto cleanup;
+    }
+    
+    // Populate POST, GET, UPDATE, DELETE fields of PHP engine
+    ph7_vm_config(vm, PH7_VM_CONFIG_HTTP_REQUEST, request.c_str(), request.length());
+    
+    // The actual execution of code
+    ph7_vm_exec(vm, 0);
+
+    // Get output string from VM
+    error = ph7_vm_config(vm, PH7_VM_CONFIG_EXTRACT_OUTPUT, &uncast, &outputlen);
+    if (error == PH7_OK) {
+        output = (const char*) uncast;
+    }
+
+    // Clean up any resources held by the execution engine
+cleanup:
+    ph7_release(engine);
+    if (vm != NULL) {
+        ph7_vm_release(vm);
+    }
+
+    if (output != NULL) {
+        body += output;
+    }
+    return body;
 }
 
 http_method_t HttpServer::GetMethod(const string method) {
