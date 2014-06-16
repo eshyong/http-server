@@ -80,7 +80,7 @@ public:
 
     // Equality operator
     bool Equals(HttpRequest& other) {
-        return (method == other.get_method() && version == other.get_version() && path.compare(other.get_path()) == 0);
+        return (method == other.get_method() && version == other.get_version() && path.compare(other.get_path()) == 0 && query.compare(other.get_query()) == 0);
     }
 
     // Initialization and reset method
