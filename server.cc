@@ -61,18 +61,6 @@ char hexToAscii(string hex) {
     return (char) ascii;
 }
 
-void getArgsFromQuery(string& query, vector<const char*>& args) {
-    // Queries come in the following form:
-    // query = "name1=value1&name2=value2 ... nameN=valueN"
-    // We will parse value1 and value2, and append it to args
-    int index = 0;
-    int begin = 0;
-    int length = query.length();
-    bool equals = false;
-    string* arg;
-
-}
-
 ////////////////////////////////////////////////
 //              SocketServer                  //
 ////////////////////////////////////////////////
@@ -289,7 +277,6 @@ void HttpServer::RunMultiThreaded(bool verbose) {
     pair<int, string> client;
     int connection;
     int error;
-    void* status;
 
     // Initialize thread attributes and mutex
     pthread_attr_init(&attr);
@@ -554,12 +541,8 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
     string response = "";
     http_method_t method = request.get_method();
     http_version_t version = request.get_version();
-    pid_t pid;
-    int begin = 0;
     int index = 0;
-    int querylen = query.length();
     int contentlen;
-    int error;
     int c = 0;
     
     // Get GMT time
@@ -569,33 +552,6 @@ string HttpServer::CreateResponse(HttpRequest request, http_status_t status) {
     // Check method type
     if (method == GET && status == OK) {
         if (strcmp(type.c_str(), "application/php") == 0) {
-            // WARNING: executes bash code with user input
-            // Extremely unsafe and will be deprecated
-            // I am considering embedding PHP or adding a CGI protocol
-            /*
-            // Create a php command
-            command = "php ";
-            command += path;
-            command += SPACE;
-            
-            // Parse query to get php arguments
-            while (index < querylen) {
-                // Start of valueN substr
-                if (query[index] == '=') {
-                    begin = index + 1;
-                }
-
-                // end of valueN substr
-                if (query[index] == '&') {
-                    command += query.substr(begin, index - begin);
-                    command += SPACE;
-                }
-                index++;
-            }
-            command += query.substr(begin, string::npos);
-
-            // Fork and execute php code
-            system(command.c_str()); */
             status = NOT_IMPLEMENTED;
             type = "text/html";
         } else {

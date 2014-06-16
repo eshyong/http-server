@@ -33,7 +33,6 @@ private:
     // Addresses for the server and the client
     struct sockaddr_in serveraddr;
     struct sockaddr_in clientaddr;
-    socklen_t address_len;
     char peername[INET_ADDRSTRLEN];
     
     // Socket file descriptors
@@ -61,7 +60,6 @@ private:
     double elapsedtime;
     pthread_attr_t attr;
     pthread_mutex_t cachemutex;
-    bool verbose;
 public:
     // Constructor/Destructor
     HttpServer();
