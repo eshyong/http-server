@@ -405,6 +405,9 @@ void HttpServer::ParseRequest(HttpRequest& request, bool verbose, const char* re
     string type = "";
     string uri = "";
 
+    // Keep a copy of the original request string
+    string copy = recvbuf;
+
     // Get method string
     while (i <= BUFFER_LENGTH && !isspace(recvbuf[i])) {
         buffer += recvbuf[i];
@@ -451,7 +454,7 @@ void HttpServer::ParseRequest(HttpRequest& request, bool verbose, const char* re
     }
 
     // Fill request struct
-    request.Initialize(method, version, path, query, type);
+    request.Initialize(method, version, copy, path, query, type);
 }
 
 string HttpServer::HandleRequestThreaded(HttpRequest& request, bool verbose, bool& cached) {
@@ -746,19 +749,20 @@ void HttpServer::ParseUri(string& uri, string& path, string& query, string& type
 ////////////////////////////////////////////////
 //              HttpRequest                   //
 ////////////////////////////////////////////////
-HttpRequest::HttpRequest(http_method_t method, http_version_t version, string path, string query, string type) {
-    Initialize(method, version, path, query, type);
+HttpRequest::HttpRequest(http_method_t method, http_version_t version, string copy, string path, string query, string type) {
+    Initialize(method, version, copy, path, query, type);
 }
 
 HttpRequest::HttpRequest() {
-    Initialize(INVALID_METHOD, INVALID_VERSION, "", "", "");
+    Initialize(INVALID_METHOD, INVALID_VERSION, "", "", "", "");
 }
 
-void HttpRequest::Initialize(http_method_t method, http_version_t version, string path, string query, string type) {
+void HttpRequest::Initialize(http_method_t method, http_version_t version, string copy, string path, string query, string type) {
     // Call parent initialization
     toolong = false;
     this->method = method;
     this->version = version;
+    this->copy = copy;
     this->path = path;
     this->query = query;
     this->type = type;

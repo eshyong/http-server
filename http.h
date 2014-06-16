@@ -61,12 +61,13 @@ private:
     vector<const Header*> headers;
     http_method_t method;
     http_version_t version;
+    string copy;
     string path;
     string query;
     string type;
     bool toolong;
 public:
-    HttpRequest(http_method_t method, http_version_t version, string path, string query, string type);
+    HttpRequest(http_method_t method, http_version_t version, string copy, string path, string query, string type);
     HttpRequest();
     ~HttpRequest();
 
@@ -76,7 +77,7 @@ public:
     }
 
     // Initialization and reset method
-    void Initialize(http_method_t method, http_version_t version, string path, string query, string type);
+    void Initialize(http_method_t method, http_version_t version, string copy, string path, string query, string type);
     void Reset();
 
     // Header parsing 
@@ -86,6 +87,7 @@ public:
     vector<const Header*> get_headers() { return headers; }
     http_method_t get_method() { return method; }
     http_version_t get_version() { return version; }
+    string get_copy() { return copy; }
     string get_path() { return path; }
     string get_query() { return query; }
     string get_content_type() { return type; }
@@ -94,6 +96,7 @@ public:
     // Setters
     void set_method(http_method_t method) { this->method = method; }
     void set_version(http_version_t version) { this->version = version; }
+    void set_copy(string copy) { this->copy = copy; }
     void set_path(string path) { this->path = path; }
     void set_query(string query) { this->query = query; }
     void set_flag(bool value) { toolong = value; }
