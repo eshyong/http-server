@@ -1,7 +1,7 @@
 HTTP-Server
 ===========
 
-A toy HTTP server, with support for multi-process and multi-threading.
+A toy HTTP server, with support for multi-process and multi-threading. Includes a PHP interpreter!
 
 Usage: 
 
