@@ -16,5 +16,5 @@ main.o: main.cc
 server.o: server.cc
 	$(CPPC) $(CFLAGS) $(STD) server.cc
 
-ph7.o: ph7.c
-	$(CC) $(CFLAGS) ph7.c
+ph7.o: PH7/ph7.c
+	$(CC) $(CFLAGS) PH7/ph7.c

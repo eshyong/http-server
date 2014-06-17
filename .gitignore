@@ -1,7 +1,5 @@
 grizzly
 *.o
-ph7.c
-ph7.h
 *.dSYM
 *.swp
 *.asm
