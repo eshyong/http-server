@@ -150,11 +150,11 @@ bool SocketServer::Receive(bool verbose, pair<int, string> client) {
     }
     
     // Logging and NULL termination
+    recvbuf[count] = (char) NULL;
     if (verbose) {
         cout << "Received " << count << " bytes from " << peer << ":\n";
         cout << recvbuf << endl;
     }
-    recvbuf[count] = (char) NULL;
     return true;
 }
 
@@ -475,9 +475,10 @@ string HttpServer::HandleRequestThreaded(HttpRequest& request, bool verbose, boo
             cout << "Not found in cache.\n";
         }
         response = HandleRequest(request, verbose);
-    }
-    if (verbose) {
-        cout << endl << "Response: " << response << endl << endl;
+    } else {
+        if (verbose) {
+            cout << endl << "Response: " << response << endl << endl;
+        }
     }
 
     return response;
@@ -528,7 +529,6 @@ string HttpServer::HandleRequest(HttpRequest& request, bool verbose) {
 string HttpServer::HandleGet(HttpRequest request, http_status_t status) {
     // File streams for reading
     fstream file;
-    fstream temp;
 
     // String variables for file streams and the HTTP response
     string body = "";
