@@ -11,10 +11,10 @@ HTML files for testing are in folder `test`.
 
 Flags:
 
---mprocess: run in multi-process mode
---mthreaded: run in mult-threaded mode
---evented: run in evented mode
---silent: silences all output
+`--mprocess:` run in multi-process mode<br>
+`--mthreaded:` run in mult-threaded mode<br>
+`--evented:` run in evented mode<br>
+`--silent:` silences all output<br>
 
 TODO:
 - Configurable hosting folder and port number
