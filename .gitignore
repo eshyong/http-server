@@ -3,3 +3,4 @@ grizzly
 *.dSYM
 *.swp
 *.asm
+*.llvm
