@@ -11,9 +11,7 @@ int main(int argc, char* argv[]) {
     bool verbose = true;
     if (argc > 1) {
         for (int i = 1; i < argc; i++) {
-            if (strcmp(argv[i], "hi") == 0) {
-                cout << "Hello to you too!\n";
-            } else if (strcmp(argv[i], "--mprocess") == 0) {
+            if (strcmp(argv[i], "--mprocess") == 0) {
                 type = MPROCESS;
             } else if (strcmp(argv[i], "--mthreaded") == 0) {
                 type = MTHREADED;
@@ -22,8 +20,8 @@ int main(int argc, char* argv[]) {
             } else if (strcmp(argv[i], "--silent") == 0 || strcmp(argv[i], "-s") == 0) {
                 verbose = false;
             } else if (strcmp(argv[i], "--help") == 0) {
-                cout << "Usage: grizzly [flags]\n";
-                cout << "By default, grizzly runs in multiprocessed mode.\n";
+                cout << "Usage: http [flags]\n";
+                cout << "By default, http runs in multiprocessed mode.\n";
                 cout << "   flags:\n";
                 cout << "           --mprocess: server runs in multiprocessed mode\n";
                 cout << "           --mthreaded: server runs in multithreaded mode\n";
@@ -38,7 +36,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    HttpServer Grizzly;
-    Grizzly.Run(type, verbose);
+    HttpServer server;
+    server.Run(type, verbose);
     return 0;
 }
